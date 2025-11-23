@@ -3,27 +3,215 @@
 <head>
   <meta charset="UTF-8">
   <title>banda</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    :root {
+      --bg1: #7dd3fc;
+      --bg2: #a855f7;
+      --bg3: #4c1d95;
+      --card-bg: rgba(255, 255, 255, 0.82);
+      --accent: #5b4bff;
+      --text-main: #111827;
+      --text-sub: #4b5563;
+      --radius-xl: 32px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, system-ui, "SF Pro Text", "Segoe UI", sans-serif;
+      color: var(--text-main);
+      position: relative;
+      overflow: hidden;
+      padding: 24px;
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.45) 0, rgba(255, 255, 255, 0) 45%),
+        linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3));
+    }
+
+    .stars,
+    .stars::before,
+    .stars::after {
+      position: fixed;
+      inset: -120px;
+      pointer-events: none;
+      background: transparent;
+      z-index: 0;
+    }
+
+    .stars {
+      box-shadow:
+        6vw 8vh 0 0 #ffffff,
+        18vw 24vh 0 0 #fef9ff,
+        32vw 10vh 0 0 #fdfdfd,
+        48vw 30vh 0 0 #fef6ff,
+        70vw 18vh 0 0 #ffffff,
+        82vw 40vh 0 0 #fdf9ff,
+        12vw 60vh 0 0 #ffffff,
+        40vw 75vh 0 0 #f4f0ff,
+        65vw 90vh 0 0 #ffffff;
+      animation: fall1 22s linear infinite;
+      opacity: 0.85;
+    }
+
+    .stars::before {
+      content: "";
+      box-shadow:
+        10vw 15vh 0 0 #ffffff,
+        28vw 40vh 0 0 #fefbff,
+        55vw 22vh 0 0 #ffffff,
+        75vw 55vh 0 0 #f8f4ff,
+        90vw 28vh 0 0 #ffffff,
+        20vw 80vh 0 0 #fdf9ff,
+        52vw 95vh 0 0 #ffffff;
+      animation: fall2 30s linear infinite;
+      opacity: 0.7;
+    }
+
+    .stars::after {
+      content: "";
+      box-shadow:
+        5vw 25vh 0 0 #ffffff,
+        22vw 52vh 0 0 #fefbff,
+        45vw 12vh 0 0 #ffffff,
+        68vw 65vh 0 0 #f9f5ff,
+        88vw 48vh 0 0 #ffffff,
+        30vw 92vh 0 0 #fdfbff;
+      animation: fall3 38s linear infinite;
+      opacity: 0.6;
+    }
+
+    @keyframes fall1 {
+      0%   { transform: translateY(-40px); opacity: 0.9; }
+      50%  { transform: translateY(40px);  opacity: 0.5; }
+      100% { transform: translateY(-40px); opacity: 0.9; }
+    }
+
+    @keyframes fall2 {
+      0%   { transform: translateY(40px);  opacity: 0.75; }
+      50%  { transform: translateY(-50px); opacity: 0.4; }
+      100% { transform: translateY(40px);  opacity: 0.75; }
+    }
+
+    @keyframes fall3 {
+      0%   { transform: translateY(-60px); opacity: 0.7; }
+      50%  { transform: translateY(50px);  opacity: 0.3; }
+      100% { transform: translateY(-60px); opacity: 0.7; }
+    }
+
+    .shell {
+      max-width: 520px;
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(26px);
+      border-radius: var(--radius-xl);
+      padding: 40px 40px 32px;
+      box-shadow:
+        0 22px 60px rgba(15, 23, 42, 0.35),
+        0 0 0 1px rgba(255, 255, 255, 0.75);
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      gap: 18px;
     }
-    img {
-      width: 180px;
-      height: 180px;
-      border-radius: 50%;
+
+    .avatar-wrap {
+      width: 210px;
+      border-radius: 28px;
+      padding: 6px;
+      background: linear-gradient(135deg, rgba(109, 96, 255, 0.7), rgba(236, 197, 255, 0.4));
+      box-shadow:
+        0 16px 42px rgba(15, 23, 42, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.8);
+    }
+
+    .avatar {
+      display: block;
+      width: 100%;
+      border-radius: 22px;
       object-fit: cover;
-      margin-bottom: 20px;
+    }
+
+    .tag {
+      margin-top: 14px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: rgba(91, 75, 255, 0.07);
+    }
+
+    .title {
+      font-size: 1.18rem;
+      letter-spacing: 0.03em;
+      text-align: center;
+      color: var(--text-main);
+      margin-top: 2px;
+    }
+
+    .highlight {
+      color: var(--accent);
+    }
+
+    .subtitle {
+      font-size: 0.95rem;
+      color: var(--text-sub);
+      text-align: center;
+      margin-top: 4px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 30px 22px 26px;
+      }
+
+      .avatar-wrap {
+        width: 180px;
+      }
+
+      .title {
+        font-size: 1.05rem;
+      }
+
+      .subtitle {
+        font-size: 0.88rem;
+      }
     }
   </style>
 </head>
 <body>
-  <img src="profile.jpg" alt="banda profile">
-  <h1>Site belongs to banda</h1>
-  <h1>maybe.. coming soon!</h1>
+  <div class="stars"></div>
+
+  <main class="shell">
+    <section class="card">
+      <div class="avatar-wrap">
+        <img src="profile.jpg" alt="banda profile" class="avatar">
+      </div>
+      <div class="tag">personal space</div>
+      <h1 class="title">
+        Site belongs to <span class="highlight">banda</span>
+      </h1>
+      <p class="subtitle">
+        Hi, I'm banda XD.<br>
+        Maybe.. Comming Soon!
+      </p>
+    </section>
+  </main>
 </body>
 </html>
