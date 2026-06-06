@@ -21,6 +21,54 @@ const tplPath = path.join(outRoot, "post.html");
 
 const esc = (s) => String(s ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+const imageExts = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
+
+const getAttr = (tag, name) => {
+    const match = String(tag || "").match(new RegExp(`${name}=["']([^"']+)["']`, "i"));
+    return match?.[1] || "";
+};
+
+const toAbsoluteUrl = (url, base) => {
+    try {
+        return new URL(url, base).href;
+    } catch {
+        return url;
+    }
+};
+
+const fetchExternalFirstImage = async (url) => {
+    if (!url || !/^https?:\/\//i.test(url)) return null;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const html = await res.text();
+        const firstImgTag = html.match(/<img\b[^>]*src=["'][^"']+["'][^>]*>/i)?.[0];
+        const firstImg = getAttr(firstImgTag, "src");
+        return firstImg ? toAbsoluteUrl(firstImg, url) : null;
+    } catch (err) {
+        console.warn(`[build] failed to fetch external preview image: ${url}`, err?.message || err);
+        return null;
+    }
+};
+
+const findAssetName = async (assetDir, requestedName) => {
+    if (!requestedName) return null;
+    const cleanName = decodeURIComponent(requestedName).split(/[?#]/)[0];
+    const exact = path.join(assetDir, cleanName);
+    if (await fs.pathExists(exact)) return cleanName;
+
+    const parsed = path.parse(cleanName);
+    if (!parsed.name || !(await fs.pathExists(assetDir))) return cleanName;
+
+    const files = await fs.readdir(assetDir);
+    const byStem = files.find(file => {
+        const p = path.parse(file);
+        return p.name.toLowerCase() === parsed.name.toLowerCase() && imageExts.includes(p.ext.toLowerCase());
+    });
+
+    return byStem ?? cleanName;
+};
+
 const toSlug = (s) => String(s ?? "")
     .trim()
     .toLowerCase()
@@ -32,6 +80,11 @@ const fmt = (d) => {
     if (Number.isNaN(x.getTime())) return d;
     const m = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][x.getUTCMonth()];
     return `${m} ${x.getUTCDate()}, ${x.getUTCFullYear()}`;
+};
+
+const toDateString = (d) => {
+    if (d instanceof Date && !Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    return String(d ?? "");
 };
 
 await fs.ensureDir(outHtml);
@@ -57,9 +110,10 @@ for (const fn of files) {
     const x = matter(raw);
 
     const title = x.data.title ?? base;
-    const date = x.data.date ?? "";
+    const date = toDateString(x.data.date ?? "");
     const tags = Array.isArray(x.data.tags) ? x.data.tags : [];
     const excerpt = x.data.excerpt ?? "";
+    const externalUrl = x.data.externalUrl ?? x.data.external_url ?? null;
 
     const slug = toSlug(x.data.slug ?? base);
 
@@ -79,14 +133,45 @@ for (const fn of files) {
     // {{asset}} 방식도 지원
     bodyMd = bodyMd.replaceAll("{{asset}}", astRel);
 
+    const normalizeAssetUrl = async (url) => {
+        const rawUrl = String(url || "").trim();
+        if (!rawUrl || /^(?:https?:|mailto:|#|data:)/i.test(rawUrl)) return rawUrl;
+        if (rawUrl.startsWith(astRel + "/")) return rawUrl;
+
+        const filename = path.basename(rawUrl.split(/[?#]/)[0]);
+        const assetName = await findAssetName(srcAstDir, filename);
+        return `${astRel}/${encodeURIComponent(assetName)}`;
+    };
+
+    const imageMarkdownRegex = /(!\[[^\]]*\]\()([^)]+)(\))/g;
+    const imageMatches = [...bodyMd.matchAll(imageMarkdownRegex)];
+    for (const match of imageMatches) {
+        const normalized = await normalizeAssetUrl(match[2]);
+        bodyMd = bodyMd.replace(match[0], `${match[1]}${normalized}${match[3]}`);
+    }
+
+    const imageHtmlRegex = /(<img\b[^>]*\bsrc=["'])([^"']+)(["'][^>]*>)/gi;
+    const htmlImageMatches = [...bodyMd.matchAll(imageHtmlRegex)];
+    for (const match of htmlImageMatches) {
+        const normalized = await normalizeAssetUrl(match[2]);
+        bodyMd = bodyMd.replace(match[0], `${match[1]}${normalized}${match[3]}`);
+    }
+
+    const indexImage = x.data.index_img ? await normalizeAssetUrl(x.data.index_img) : null;
     const content = md.render(bodyMd);
 
     // Extract all image URLs to find a suitable preview
     const imageRegex = /<img src="([^"]+)"/g;
     const allImages = [...content.matchAll(imageRegex)].map(match => match[1]);
 
+    const externalPreviewImage = externalUrl ? await fetchExternalFirstImage(externalUrl) : null;
+
     let previewImage = null;
-    if (allImages.length > 0) {
+    if (externalPreviewImage) {
+        previewImage = externalPreviewImage;
+    } else if (indexImage) {
+        previewImage = indexImage.replace(/^\.\.\//, './');
+    } else if (allImages.length > 0) {
         // Prefer the second image if it exists, otherwise fall back to the first.
         const imageUrl = allImages.length >= 2 ? allImages[1] : allImages[0];
 
@@ -118,7 +203,7 @@ for (const fn of files) {
         }
     }
 
-    posts.push({ title, date, date_human: fmt(date), tags, excerpt, slug, previewImage });
+    posts.push({ title, date, date_human: fmt(date), tags, excerpt, slug, previewImage, externalUrl });
 }
 
 posts.sort((a, b) => (a.date < b.date ? 1 : -1));

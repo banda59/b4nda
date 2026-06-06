@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unlocking BitLocker: Windows Full-Disk Encryption Under Attack, Part 1</title>
+
+    <link rel="stylesheet" href="../../style.css">
+    <link rel="stylesheet" href="../blog.css">
+
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link href="https://cdn.jsdelivr.net/gh/sun-typeface/SUITE@2/fonts/static/woff2/SUITE.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Sweet400', sans-serif;
+            font-weight: 400; /* 기본 굵기 */
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Sweet800', sans-serif;
+            font-weight: 800; /* 제목에는 더 굵은 굵기를 적용합니다. */
+        }
+
+        /* 코드 블록은 폰트 적용에서 제외하고 고정폭 폰트를 사용합니다. */
+        pre, code, kbd, samp {
+            font-family: 'Consolas', 'Monaco', 'Menlo', monospace;
+        }
+
+        /* strong, b 태그가 굵게 표시되도록 수정 */
+        strong, b {
+            font-weight: 800;
+        }
+
+        .post-content img {
+            max-width: 100%;
+            height: auto;
+            /* 이미지를 가운데 정렬합니다. */
+            display: block;
+            margin: 25px auto;
+            /* 보라색 테두리와 약간의 안쪽 여백, 둥근 모서리를 추가합니다. */
+            border: 3px solid #b091ff;
+            border-radius: 8px;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+
+        .post-content {
+            /* 본문 글자 크기를 키웁니다. */
+            font-size: 1.1em;
+            line-height: 1.7;
+        }
+
+        /* 모바일 반응형 스타일 */
+        @media (max-width: 768px) {
+            .single-post-container .main-content {
+                /* 모바일 화면에 맞게 좌우 패딩을 줄입니다. */
+                padding: 20px 15px;
+            }
+
+            .post-title-full {
+                /* 제목 폰트 크기를 모바일에 맞게 조정합니다. */
+                font-size: 2em;
+            }
+
+            .post-content {
+                /* 본문 폰트 크기와 줄 간격을 조정하여 가독성을 높입니다. */
+                font-size: 1.05em;
+                line-height: 1.75;
+            }
+
+            /* 코드 블록이 가로 스크롤되도록 설정합니다. */
+            .post-content pre {
+                white-space: pre;
+                overflow-x: auto;
+            }
+        }
+
+        #c {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+
+        body.standalone-post {
+            background-color: #000;
+        }
+
+        body.standalone-post .single-post-container {
+            background: #16181d; /* Dark background for content */
+            color: #bcbcff;      /* Main text color: very light blue-purple */
+            max-width: 900px;
+            margin: 40px auto;
+            border-radius: 5px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Inline code style (like Notion's Ctrl+E) */
+        body.standalone-post .post-content :not(pre)>code {
+            color: #d291ff; /* Fluorescent-like purple */
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-size: 90%;
+        }
+
+        /* Link color on dark background */
+        body.standalone-post .post-content a {
+            color: #9c87fa; /* LightSkyBlue for good contrast */
+        }
+
+        /* Full code blocks (pre > code) style for dark mode */
+        body.standalone-post .post-content pre .hljs {
+            background: #121418; /* Darker than the container */
+            border-radius: 4px;
+        }
+
+        @media (max-width: 940px) {
+            body.standalone-post .single-post-container {
+                margin: 20px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            body.standalone-post .single-post-container {
+                margin: 0;
+                border-radius: 0;
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+
+    <div class="single-post-container">
+        <main class="main-content">
+            <article class="post-full">
+                <header class="post-header">
+                    <a href="../index.html" class="back-to-list">&larr; Back to List</a>
+
+                    <h1 class="post-title-full">Unlocking BitLocker: Windows Full-Disk Encryption Under Attack, Part 1</h1>
+
+                    <p class="post-meta">
+                        <time datetime="2026-01-22">January 22, 2026</time> | By banda |
+                        <span class="post-tags">
+                            <a href="../index.html?tag=Windows">Windows</a>, <a href="../index.html?tag=BitLocker">BitLocker</a>, <a href="../index.html?tag=CrashXTS">CrashXTS</a>, <a href="../index.html?tag=AES-XTS">AES-XTS</a>
+                        </span>
+                    </p>
+                </header>
+
+                <section class="post-content">
+                    <h1>1. Introduction</h1>
+<p><img src="../assets/post04/logo.jpg" alt=""></p>
+<p>BitLocker is a disk encryption feature built into the Windows operating system designed to protect data by preventing unauthorized access when a device is lost, stolen, or accessed offline. BitLocker uses a combination of XTS-AES and TPM to provide strong key protection and data encryption; however, it does not provide integrity protection for the ciphertext itself. Today, we will understand the AES-XTS mechanism and examine the <a href="https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/">BitLocker CrashXTS</a> method, a vulnerability that can be discovered through this mechanism.</p>
+<h3>1.1 Understanding the Boot System</h3>
+<p>The UEFI firmware reads the signed <code>bootmgfw.efi</code> and BCD (Boot Configuration Data) from the EFI System Partition (ESP). This section is composed of plaintext. Secure Boot validates this boot application and the chain's DBX to establish a root of trust. While the ESP boot components are read, if trust verification fails, the VMK unseal is denied, and the system moves to the recovery path.</p>
+<p><img src="../assets/post04/image1.png" alt=""></p>
+<p>Does the encrypted area only contain user files? No. BitLocker describes <strong>Key Protectors</strong> and the key hierarchy in the volume metadata. Specifically, it uses a two-layer key design consisting of the <strong>VMK (Volume Master Key)</strong> and <strong>FVEK (Full Volume Encryption Key)</strong>. The key actually used for block encryption/decryption is the FVEK.</p>
+<p><img src="../assets/post04/image2.png" alt=""></p>
+<p>The screenshot shows the output of the <code>manage-bde -protectors -get C:</code> command, which lists the key protectors registered for the C: volume. The &quot;Numerical Password&quot; shown here is one type of protector used to unlock the VMK; it serves as a recovery mechanism when TPM-based unsealing fails in the normal boot path or when the system falls back into recovery mode. In other words, a BitLocker volume does not only contain encrypted data: it also stores, as part of its metadata, information about how the VMK can be recovered and the key hierarchy (VMK -&gt; FVEK), and ultimately relies on the FVEK to perform sector-level encryption and decryption.</p>
+<p><img src="../assets/post04/image17.png" alt=""></p>
+<p><strong>TPM</strong></p>
+<p>The TPM is a dTPM (discrete TPM) hardware chip with a secure storage repository that isolates keys and counters inside the chip. It allows secret keys to be released based on boot reliability measurements (PCR - Platform Configuration Registers) to verify if the system has &quot;booted in a trusted state.&quot;</p>
+<p>BitLocker seals the VMK to specific PCR values. By default, it uses PCR 7 (Secure Boot state, UEFI variables, Boot Manager code) and PCR 11 (BitLocker access control).</p>
+<ul>
+<li>If the boot chain is normal, the TPM allows the VMK to be <strong>unsealed</strong>.</li>
+<li>If the boot chain has been tampered with, the PCR values change, the unseal fails, and the system moves to the recovery screen.</li>
+</ul>
+<p><strong>VMK (Volume Master Key)</strong></p>
+<p>The VMK is the parent key that protects the FVEK. If the VMK cannot be legitimately restored, the FVEK cannot be unlocked, and thus the sector plaintext cannot be accessed. The VMK can be wrapped by multiple protectors:</p>
+<ul>
+<li><strong>TPM Protector:</strong> Bound to TPM PCRs.</li>
+<li><strong>Recovery Password Protector:</strong> A 48-digit numeric recovery key.</li>
+<li><strong>Password Protector:</strong> User password.</li>
+<li><strong>TPM+PIN Protector:</strong> Combination of TPM and PIN.</li>
+</ul>
+<p><strong>FVEK (Full Volume Encryption Key)</strong></p>
+<p>The FVEK handles the actual encryption of disk sectors. The targets encrypted by the FVEK include the kernel, drivers, software, and user data. The FVEK is an AES-256 (or AES-128) key. In XTS mode, 512 bits (or 256 bits) are actually used. Half is used for data encryption (K1), and the other half is used for tweak generation (K2)!</p>
+<h3>1.2 BitLocker Filter Driver Operation Principle</h3>
+<p>When the kernel loads, the BitLocker filter driver, <code>fvevol.sys</code>, intercepts disk I/O to perform encryption and decryption. Let's see how this is performed!</p>
+<ol>
+<li>When the computer boots, <code>winload.efi</code> loads the kernel and <code>BOOT_START</code> (0) drivers, and <code>fvevol.sys</code> is loaded together at this stage. (This is before NTFS mounts the system volume).</li>
+<li>In the early boot stage, before keys are ready and TPM PCR 7/11 verification hasn't occurred (VMK/FVEK not yet ready), <code>fvevol.sys</code> operates in a <strong>locked</strong> state. At this stage, the boot environment (like <code>bootmgr</code> or <code>winload</code>) reads the FVE-FS (metadata), performs TPM verification, unseals the VMK, and then decrypts the FVEK.</li>
+<li>Only when the VMK is unsealed and the FVEK is decrypted does <code>fvevol</code> switch to an <strong>unlocked</strong> state. From this point on, all data I/O for that volume is transparently encrypted and decrypted via the respective FVEK.</li>
+</ol>
+<p>In other words, the flow is: <code>App/Service</code> -&gt; <code>NTFS (ReFS)</code> -&gt; <code>I/O Manager</code> -&gt; <code>[fvevol]</code> -&gt; <code>volmgr/Storage Class</code> -&gt; <code>Port/Miniport (NVMe/SATA)</code> -&gt; <code>Disk</code>.</p>
+<p>BitLocker's core encryption method, <strong>XTS-AES</strong>, encrypts data in disk sector units. It is designed so that each block applies a <strong>tweak value (based on sector/offset)</strong>, ensuring that identical plaintext generates different ciphertext depending on its location.</p>
+<p>This design was introduced to mitigate the <strong>malleability</strong> problem found in CTR/CBC modes, where an attacker could manipulate plaintext by directly manipulating ciphertext. However, today we will look at a case showing that even this XTS structure is not perfectly secure.</p>
+<h2>2. Windows AES-CBC vs. AES-XTS Operation Modes</h2>
+<h3>2.1 BitLocker Encryption Mode</h3>
+<p>We mentioned earlier that BitLocker encrypts sector data with the FVEK. To understand the vulnerability we'll explain today, we must focus on the <strong>&quot;operation mode used on the disk medium.&quot;</strong> A hint: a disk is an &quot;access medium that reads and writes to specific locations called sectors.&quot; Therefore, BitLocker must use a block cipher operation mode that operates securely even with random access to avoid vulnerabilities.</p>
+<p><img src="../assets/post04/image3.png" alt=""></p>
+<p>Starting with Windows 11, BitLocker defaults to using <strong>AES-XTS</strong> instead of the previously used AES-CBC. This is to reduce the attack surface that can structurally occur in the CBC encryption method.</p>
+<p><img src="../assets/post04/image4.png" alt=""></p>
+<p>$
+C_i = E_K!\left(P_i \oplus C_{i-1}\right)
+$</p>
+<p>$
+P_i = D_K!\left(C_i\right) \oplus C_{i-1}
+$</p>
+<p>The CBC encryption method is likely familiar to you. It chains AES blocks together. The points where CBC becomes problematic from a disk perspective are:</p>
+<ol>
+<li>
+<p><strong>Chaining Dependency</strong></p>
+<p>Because CBC inherently allows the previous block to affect the next block, it is difficult to manage in an environment like a disk where only intermediate blocks are changed. Disks may update only parts of a file, or the OS may update only specific sectors. Independent encryption/decryption per sector is impossible, causing performance degradation.</p>
+</li>
+<li>
+<p><strong>Bit Flipping</strong></p>
+<p>As seen in the CBC decryption formula, if an attacker flips a specific bit, the bit at the same position in the decrypted plaintext is flipped in the same way. This means the ciphertext can be manipulated to change the plaintext predictably.</p>
+</li>
+<li>
+<p><strong>IV (Initialization Vector) Management Issues</strong></p>
+<p>Each sector requires a unique IV. Using the sector number as an IV creates predictability, while using a random IV requires additional storage space.</p>
+</li>
+</ol>
+<p>Considering this flow, in past CBC-based FDE (Full Disk Encryption), it was theoretically possible for an attacker to modify the ciphertext on the disk bit-by-bit to insert malicious payloads into the bootloader or OS code.</p>
+<p><img src="../assets/post04/image5.png" alt=""></p>
+<p>Due to the structural vulnerability of <strong>Malleability</strong> in CBC mode, the risk of tampering with encrypted boot sectors or critical OS files was raised. Accordingly, starting with <strong>TrueCrypt 5.0 in 2008</strong>, XTS-AES was pioneered, and Microsoft subsequently adopted <strong>XTS-AES</strong> as the standard for BitLocker starting with Windows 10 to counter these threats.</p>
+<p>Checking the operation of XTS, XTS applies a value called a <strong>tweak</strong> to each block. This tweak is a value determined by the 'disk location,' usually based on the sector number and the block index within the sector. A disk reads and writes in sectors of sizes like 512B (or 4KB), and since AES is a 16B block, a 512B sector would be divided into 32 blocks. XTS is designed so that a different tweak is applied to each of these 16B blocks.</p>
+<p>$
+T_i = \mathrm{Tweak}_{K_2}(s, j)
+$</p>
+<p>$
+C_i = E_{K_1}!\left(P_i \oplus T_i\right) \oplus T_i
+$</p>
+<p>XTS uses two keys. <strong>Key1</strong> is used for the purpose of encrypting and decrypting the actual data, and <strong>Key2</strong> is used for generating the tweak containing the data's location information.</p>
+<p>Using this XTS mode, even if an attacker manipulates a specific ciphertext block, the <strong>non-linearity</strong> causes the result to be damaged in a way that is unpredictable and close to random at the 16-byte block level. In other words, sophisticated manipulation, such as changing a specific bit of the next block to a desired value like in CBC, becomes virtually impossible.</p>
+<h3>2.2 Unresolved Challenges of XTS</h3>
+<p><img src="../assets/post04/image6.png" alt=""></p>
+<p>However, XTS still has the following fundamental limitations:</p>
+<ol>
+<li>
+<p><strong>Lack of Integrity Protection</strong></p>
+<p>XTS makes manipulation results difficult to predict, but it does not provide integrity protection to detect or reject the manipulation itself. If an attacker changes the ciphertext, the system does not detect this tampering to stop the process. The system simply decrypts the tampered data and processes it as broken plaintext (garbage).</p>
+</li>
+<li>
+<p><strong>Granular Tampering Detection</strong></p>
+<p>XTS accurately isolates changes to the specific block level. Paradoxically, this offers better granularity than CBC, providing useful clues for identifying the specific location where the modification occurred. An attacker can easily verify &quot;which block has changed&quot; from the perspective of the entire disk.</p>
+</li>
+<li>
+<p><strong>Copy-Paste Attacks</strong></p>
+<p>Identical plaintext blocks always generate identical ciphertext in the same sector. An attacker can copy a previous version of the ciphertext from the same sector and overwrite the current version, or copy ciphertext from another sector and paste it.</p>
+</li>
+<li>
+<p><strong>Narrow Block Size</strong></p>
+<p>Since XTS operates in 16-byte block units, if the same 16-byte plaintext pattern is repeated, a pattern may also be observed in the ciphertext. This can be used for ciphertext analysis.</p>
+</li>
+</ol>
+<p><img src="../assets/post04/image7.png" alt=""></p>
+<p><img src="../assets/post04/image8.png" alt=""></p>
+<p>To verify this directly, we conducted a practical experiment to intuitively check the lack of integrity in XTS-AES on a BitLocker volume. First, we created a 16MiB file on a BitLocker-protected volume (V:), output its SHA-256 hash immediately after creation, and recorded it as the baseline. Then, with the volume locked, we directly edited the raw disk area to partially tamper with the 16-byte ciphertext block containing the file. After unlocking the volume again and recalculating the SHA-256 hash of the same file, we confirmed that the hash value had changed compared to the baseline.</p>
+<p><img src="../assets/post04/image9.png" alt=""></p>
+<p><img src="../assets/post04/image10.png" alt=""></p>
+<p>Even if only 1 bit is changed in the ciphertext, in XTS results, changing 1 bit randomizes the entire corresponding 16-byte block. At the same time, we can confirm that this has no effect on other neighboring blocks.</p>
+<p><strong>Why Windows Cannot Switch to AEAD</strong></p>
+<p>However, there are limitations for Windows to completely switch to a form of disk encryption that attaches integrity, such as MAC or AEAD.</p>
+<ol>
+<li><strong>Full System Redesign Required:</strong> Adding integrity is not just a matter of changing the encryption mode; it requires a complete redesign of the system architecture regarding how the Windows boot, recovery, file system, and crash dump paths handle integrity failures.</li>
+<li><strong>Performance Overhead:</strong> Adding a MAC to every sector has a significant impact on storage space and I/O performance.</li>
+<li><strong>Partial Write Problem:</strong> File systems often modify only parts of a sector, but AEAD operates on the whole unit, making this complex to handle.</li>
+<li><strong>Recovery Scenarios:</strong> If a part of the disk is damaged, integrity verification failure could make the entire volume unmountable.</li>
+</ol>
+<p>Due to concerns about availability degradation, where mounting the entire volume could be refused because of strict verification failures caused by small data corruption, it is still difficult to prepare a complete countermeasure.</p>
+<h3>2.3 CASE: CVE-2025-21210 (CrashXTS)</h3>
+<p>The property of XTS that &quot;the same sector is encrypted with the same tweak&quot; means that given the same sector number and the same FVEK, the same plaintext is always converted to the same ciphertext. Even if rebooted multiple times, the ciphertext remains constant as long as the sector number does not change. Also, while it is difficult to obtain a Write primitive in XTS, we can cause the system operation flow to fail via <strong>Corrupt</strong>. This point is explained by <strong>CVE-2025-21210</strong>, <a href="https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf">known as CrashXTS</a>.</p>
+<p><img src="../assets/post04/image11.png" alt=""></p>
+<p>When BitLocker processes normal runtime I/O in Windows, XTS-AES encryption/decryption is applied sector-by-sector via the <code>fvevol.sys</code> stack. However, in special paths that write directly to the disk with a minimal dump stack, such as <strong>Crash Dump/Hibernation</strong>, we cannot assume that all filters in the normal I/O path are operating. Because of this, BitLocker separately loads a dump filter called <code>dumpfve.sys</code> designed to maintain encryption even when dump/hibernation data is written to the disk.</p>
+<p><img src="../assets/post04/image12.png" alt=""></p>
+<p>This flow is also confirmed in decompiled code. The function goes through the process <code>FveGroupPolicyGetMultiSzValue()</code> to read the <code>DumpFilters</code> value under <code>SYSTEM\CurrentControlSet\Control\CrashControl</code>, and iterates through the list to check if <code>dumpfve.sys</code> is included via <code>_wcsicmp()</code>. Furthermore, if <code>dumpfve.sys</code> is missing or parsing fails, it aborts immediately. Normally, the flow prevents dump/hibernation from proceeding if the encryption dump filter is missing.</p>
+<p>However, the problem is that <strong>XTS-based disk encryption does not provide integrity.</strong> By using the properties of XTS to manipulate a specific ciphertext block and break the 16-byte plaintext block, one can damage the block containing the <code>DumpFilters</code> offset inside the Registry Hive. This induces a state where the parser cannot normally locate the <code>DumpFilters</code> entry. In other words, the goal is to induce the failure of the expected operation through this <strong>Corrupt</strong>.</p>
+<p><img src="../assets/post04/image13.png" alt=""></p>
+<p>The screen shows the bytes around the <code>ControlSet...\Control\CrashControl</code> key inside the SYSTEM registry hive as Hex values. In the ASCII area on the right, strings like <code>CrashControl</code>, <code>AutoReboot</code>, <code>CrashDumpEnabled</code>, <code>DumpFile</code>, and <code>DumpFilters</code> are visible. This means the key/value names exist as strings inside the actual file.</p>
+<p>In XTS, if you manipulate the ciphertext, the plaintext of that 16-byte block is uncontrollably randomized. That is, if you target the 4-byte offset inside the registry hive structure and randomize the 16-byte block containing this field, from the kernel's perspective, it looks as if the <code>DumpFilters</code> value does not exist, and the hive loader enters a state where it cannot find the value list location. And inducing this is our goal!</p>
+<p><img src="../assets/post04/image14.png" alt=""></p>
+<p>Considering the entire disk, there are a huge number of 16-byte blocks. Since we cannot pick a random block on a multi-GB disk to break <code>DumpFilters</code>, we find that the <code>CrashControl</code> string is near the hive file offset <code>0x13B330</code>. Then, we can consider a method of keeping only a few dozen surrounding blocks as candidates and breaking them one by one. We confirmed via Hex values that the <code>DumpFilter</code> related structure is located approximately 248 bytes away from the location containing <code>CrashControl</code>. 248 bytes is roughly 15.5 blocks in terms of 16-byte blocks. Therefore, we can target blocks around <code>+0xF0</code> or <code>+0x100</code> as candidate blocks.</p>
+<p><img src="../assets/post04/image15.png" alt=""></p>
+<p>So, how can we specifically find where the SYSTEM hive is in the encrypted volume and where the <code>CrashControl</code> key node is located within it? If you trigger states like clean shutdown, forced shutdown, or reboot after a crash on the same computer, specific blocks in the SYSTEM hive file change. This part can be identified as near the start of the SYSTEM hive. Specifically, after a BSOD reboot, a specific volatile subkey called <code>LastCrashDump</code> is created under <code>CrashControl</code> and disappears after a clean shutdown. At this time, only some fields of the corresponding key node structure change in a predictable way. In other words, by scanning the entire hive, blocks that change exactly according to that pattern can be thought of as the <code>CrashControl</code> key node!</p>
+<p><strong>Normal Boot State</strong></p>
+<pre><code class="language-c">Offset      Hex bytes (16B)                                      ASCII
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 ad 71 01 42 ed f0 da 01    ....nk ..q.B....
+0x0056e300  03 00 00 00 e8 03 00 00 01 00 00 00 00 00 00 00    ................
+0x0056e310  28 7b 74 00 ff ff ff ff 0c 00 00 00 38 f4 a7 00    ({t.........8...
+0x0056e320  08 bc 46 00 ff ff ff ff 20 00 00 00 00 00 00 00    ..F..... .......
+0x0056e330  2c 00 00 00 30 00 00 00 00 00 00 00 0c 00 00 00    ,...0...........
+0x0056e340  43 72 61 73 68 43 6f 6e 74 72 6f 6c 00 00 00 00    CrashControl....
+</code></pre>
+<p><strong>Immediately After Crash/BSOD</strong></p>
+<pre><code class="language-c">Offset      Hex bytes (16B)                                      ASCII
+0x0056e2f0  a0 ff ff ff 6e 6b 20 00 73 62 74 ab 14 f7 da 01    ....nk ..sbt.....
+0x0056e300  03 00 00 00 e8 03 00 00 01 00 00 00 00 00 00 00    ................
+0x0056e310  28 7b 74 00 c8 8e 01 80 0c 00 00 00 38 f4 a7 00    ({t.........8...
+0x0056e320  08 bc 46 00 ff ff ff ff 20 00 00 00 00 00 00 00    ..F..... .......
+0x0056e330  2c 00 00 00 30 00 00 00 00 00 00 00 0c 00 00 00    ,...0...........
+0x0056e340  43 72 61 73 68 43 6f 6e 74 72 6f 6c 00 00 00 00    CrashControl....
+</code></pre>
+<p>Looking at the two dumps, the first thing that stands out is that the string itself is maintained. In both states, the <code>CrashControl</code> string remains at line <code>0x0056e340</code>. In other words, it is not a situation where the text <code>CrashControl</code> disappears and cannot be found, but a state where some fields inside the structure describing <code>CrashControl</code> change. It is not that the whole thing is swapped, but only <strong>some fields of the structure change selectively</strong>. And this becomes a strong clue that we are looking at a structure with some meaning, not a random dump.</p>
+<pre><code class="language-c">Offset      Hex bytes (16B)                                      ASCII
+0x00000000  9c 1e d1 7a 39 39 d4 13 0c d4 40 c5 a8 6f c4 de    ...z99....@..o..
+0x00000010  e0 79 bc 2d dd 66 e2 25 b0 48 0f 58 53 2f 06 5d    .y.-.f.%.H.XS/.]
+0x00000020  74 ac c3 51 86 9e 74 64 e2 d9 6e d0 9c 11 ee 4d    t..Q..td..n....M
+0x00000030  03 40 03 52 05 e0 bc 37 41 c1 3f a2 7e 2a 09 84    .@.R...7A.?.~*..
+0x00000040  24 80 dc b8 6a 20 c8 81 2d c6 61 30 39 9f 30 51    $...j ..-.a09.0Q
+0x00000050  31 1b 0c 74 80 96 8c f2 ad 9d 28 26 f9 ce 8d 16    1..t......(&amp;....
+0x00000060  1c 23 fd d1 08 45 f0 c1 84 bb e5 84 bf b6 73 17    .#...E........s.
+0x00000070  f0 e3 50 f2 7c 35 7b 91 bd e5 5e b3 a7 4d 4c bf    ..P.|5{...^..ML.
+0x00000080  db f0 de 96 ba 50 d9 09 3d 83 b2 fb 1a f4 35 aa    .....P..=.....5.
+</code></pre>
+<pre><code class="language-c">Offset      Hex bytes (16B)                                      ASCII
+0x00000000  48 49 42 52 09 00 00 00 33 c0 00 00 d8 04 00 00    HIBR....3.......
+0x00000010  04 3e 0a 00 00 00 00 00 00 10 00 00 00 00 00 00    .&gt;..............
+0x00000020  3e 73 b2 1f 2b f7 da 01 3e 1d 07 2a 00 00 00 00    &gt;s..+...&gt;..*....
+0x00000030  ff bd 9b bd 7f a4 5f 06 01 ca 00 00 0a 00 00 00    ......_.........
+0x00000040  00 30 44 a8 80 c2 ff ff 00 00 14 00 4e 21 00 00    .0D.........N!..
+0x00000050  61 d7 00 00 00 00 00 00 34 54 00 00 00 00 00 00    a.......4T......
+0x00000060  00 00 00 00 00 00 00 00 2c 00 00 00 00 00 00 00    ........,.......
+0x00000070  7c 13 00 00 00 00 00 00 fc 57 02 00 00 00 00 00    |........W......
+0x00000080  a7 bf 12 00 00 00 00 00 82 99 a9 68 02 00 00 00    ...........h....
+</code></pre>
+<p>Comparing the raw sectors before and after the exploit: before the exploit, a byte sequence that looks random due to the nature of ciphertext is observed. However, after the exploit, we can observe the <strong>hibernation header starting with the <code>HIBR</code> signature exactly as it is!</strong> In other words, we can confirm that dump/hibernation data is exposed in an unencrypted form in the special path.</p>
+<h3>2.4 Reliability vs. Randomization</h3>
+<p>The core of probabilistic vulnerabilities like CrashXTS is corruption through lack of integrity. However, this reaction varies easily depending on the Windows system, version, and state, making it difficult to actually induce. Even with the same Windows version, the internal structure of the registry hive and file layout vary depending on installation history, update history, and driver installation/removal. Therefore, differential analysis must be performed from scratch for every system, making automation of this process virtually impossible. Also, even if BitLocker policies change, already encrypted blocks are not re-encrypted; however, since the layout itself changes depending on operation history, a problem arises where an attack location that succeeded once may not work at all on another system.</p>
+<h2>3. Conclusion</h2>
+<p><img src="../assets/post04/image16.png" alt=""></p>
+<p>CrashXTS empirically demonstrated the fundamental limitations of XTS, but it is somewhat limited in terms of practicality. Therefore, for BitLocker, rather than causing corruption of the encryption mode block itself, let's look into exploits using <strong>logical flaws</strong> such as WinRE verification omissions, recovery path defects, and key management errors.</p>
+<h3>References</h3>
+<ul>
+<li><a href="https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf">https://dfir.ru/wp-content/uploads/2025/01/crashxts.pdf</a></li>
+<li><a href="https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf">https://csrc.nist.gov/csrc/media/projects/block-cipher-techniques/documents/bcm/comments/xts/follow-up_xts_comments-ball.pdf</a></li>
+<li><a href="https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/">https://dfir.ru/2025/01/20/cve-2025-21210-aka-crashxts-a-practical-randomization-attack-against-bitlocker/</a></li>
+<li><a href="https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210">https://msrc.microsoft.com/update-guide/vulnerability/CVE-2025-21210</a></li>
+<li><a href="https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/">https://www.iaesjournal.com/windows-bitlocker-bug-leaks-aes-xts-encryption/</a></li>
+</ul>
+
+                </section>
+            </article>
+        </main>
+    </div>
+
+    <script>
+    const runStarfield = () => {
+      'use strict';
+
+      const files = [
+        "1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png", "9.png", "10.png"
+      ].map(n => "../../sprites/" + n);
+
+      const OBJ_MIN = 18;
+      const OBJ_MAX = 28;
+
+      const OBJ_L_MIN = 1;
+      const OBJ_L_MAX = 2;
+
+      const OBJ_SC_MIN = 0.15;
+      const OBJ_SC_MAX = 0.26;
+
+      const OBJ_PAD = 10;
+      const OBJ_SAME_EXTRA = 60;
+
+      const STAR_DOT_SCALE = 1.0;
+      const STAR_SPARKLE_SCALE = 1.35;
+
+      const OBJ_FADE_RATIO = 0.30;
+      const OBJ_FADE_MIN_A = 0.05;
+      const OBJ_FADE_MAX_A = 1.00;
+      const OBJ_FADE_PERIOD_MIN = 6;
+      const OBJ_FADE_PERIOD_MAX = 12;
+
+      const cv = document.getElementById('c');
+      if (!cv) return;
+      const ctx = cv.getContext('2d', { alpha: false });
+
+      let W = 0, H = 0, DPR = 1;
+      let imgs = [];
+      let stars = [];
+      let sparkles = [];
+      let objs = [];
+
+      let seed = (Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0;
+      function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+      function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
+
+      function resize() {
+        DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        W = Math.max(1, Math.floor(window.innerWidth));
+        H = Math.max(1, Math.floor(window.innerHeight));
+
+        cv.width = Math.floor(W * DPR);
+        cv.height = Math.floor(H * DPR);
+        cv.style.width = W + "px";
+        cv.style.height = H + "px";
+
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+
+        buildStars();
+        buildObjects();
+      }
+
+      function buildStars() {
+        stars.length = 0;
+        sparkles.length = 0;
+
+        const area = W * H;
+
+        const n = Math.max(900, Math.min(2600, Math.floor(area / 520)));
+        for (let i = 0; i < n; i++) {
+          const r = rnd();
+          let size;
+          if (r < 0.62) size = 1;
+          else if (r < 0.86) size = 2;
+          else if (r < 0.96) size = 3;
+          else size = 4;
+
+          size = Math.max(1, Math.round(size * STAR_DOT_SCALE));
+
+          stars.push({
+            x: rnd() * W,
+            y: rnd() * H,
+            s: size,
+            ph: rnd() * Math.PI * 2,
+            sp: 0.7 + rnd() * 0.9,
+            base: 0.18 + rnd() * 0.35
+          });
+        }
+
+        const m = Math.max(45, Math.min(120, Math.floor(area / 19000)));
+        for (let i = 0; i < m; i++) {
+          const rr = rnd();
+          let size;
+          if (rr < 0.55) size = 2;
+          else if (rr < 0.85) size = 3;
+          else size = 4;
+
+          size = Math.max(2, Math.round(size * STAR_SPARKLE_SCALE));
+
+          sparkles.push({
+            x: rnd() * W,
+            y: rnd() * H,
+            size,
+            ph: rnd() * Math.PI * 2,
+            sp: 0.55 + rnd() * 0.7,
+            duty: 0.20 + rnd() * 0.55,
+            shape: rnd() < 0.65 ? 0 : 1,
+            on: rnd() < 0.50
+          });
+        }
+      }
+
+      function drawStars(t) {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, H);
+
+        for (let i = 0; i < stars.length; i++) {
+          const st = stars[i];
+          const v = st.base + (0.25 + 0.35 * Math.sin(t * st.sp + st.ph));
+          if (v < 0.12) continue;
+
+          const x = st.x | 0;
+          const y = st.y | 0;
+          const s = st.s | 0;
+
+          ctx.globalAlpha = Math.min(1, v);
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(x, y, s, s);
+        }
+        ctx.globalAlpha = 1;
+
+        for (let i = 0; i < sparkles.length; i++) {
+          const st = sparkles[i];
+          const phase = (t * st.sp + st.ph) % (Math.PI * 2);
+          const s = Math.sin(phase);
+
+          const on = (st.on ? (s > (1 - st.duty)) : (s < (-1 + st.duty)));
+          if (!on) continue;
+
+          const x = st.x | 0;
+          const y = st.y | 0;
+          const size = st.size | 0;
+
+          const a = 0.70 + 0.30 * Math.abs(s);
+          ctx.globalAlpha = a;
+
+          const len = (size * (2.1 + 0.8 * Math.abs(s))) | 0;
+
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(x, y, size, size);
+
+          for (let k = -len; k <= len; k += 1) {
+            ctx.fillRect(x + k, y, 1, 1);
+            ctx.fillRect(x, y + k, 1, 1);
+          }
+
+          if (st.shape === 1) {
+            for (let k = -len; k <= len; k += 1) {
+              ctx.fillRect(x + k, y + k, 1, 1);
+              ctx.fillRect(x + k, y - k, 1, 1);
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function shuffle(a) {
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = (rnd() * (i + 1)) | 0;
+          const t = a[i]; a[i] = a[j]; a[j] = t;
+        }
+        return a;
+      }
+
+      function buildObjects() {
+        objs.length = 0;
+        if (!imgs.length) return;
+
+        const area = W * H;
+        let target = Math.round(area / 120000) + 12;
+        target = clamp(target, OBJ_MIN, OBJ_MAX);
+
+        const idxs = [];
+        while (idxs.length < target) {
+          const cycle = [];
+          for (let i = 0; i < imgs.length; i++) cycle.push(i);
+          shuffle(cycle);
+          for (let i = 0; i < cycle.length && idxs.length < target; i++) idxs.push(cycle[i]);
+        }
+
+        const cell = Math.sqrt(area / (target * 1.15));
+        const gx = Math.max(3, Math.floor(W / cell));
+        const gy = Math.max(3, Math.floor(H / cell));
+        const dx = W / gx;
+        const dy = H / gy;
+
+        const cand = [];
+        for (let y = 0; y < gy; y++) {
+          for (let x = 0; x < gx; x++) {
+            const jx = (rnd() - 0.5) * dx * 0.30;
+            const jy = (rnd() - 0.5) * dy * 0.30;
+            cand.push({ x: (x + 0.5) * dx + jx, y: (y + 0.5) * dy + jy });
+          }
+        }
+        shuffle(cand);
+
+        let cpos = 0;
+        let tries = 0;
+        const maxTries = cand.length * 10;
+
+        while (objs.length < target && tries < maxTries) {
+          tries++;
+
+          const idx = idxs[objs.length % idxs.length];
+          const im = imgs[idx];
+
+          const longSideTarget = Math.min(W, H) * (OBJ_L_MIN + (OBJ_L_MAX - OBJ_L_MIN) * rnd());
+          const base = Math.max(im.width, im.height);
+          let sc = longSideTarget / Math.max(1, base);
+          sc = clamp(sc, OBJ_SC_MIN, OBJ_SC_MAX);
+
+          const dw = Math.max(12, Math.round(im.width * sc));
+          const dh = Math.max(12, Math.round(im.height * sc));
+
+          const padEdge = Math.max(dw, dh) * 0.55 + 6;
+
+          let x, y;
+          if (cpos < cand.length) {
+            x = cand[cpos].x; y = cand[cpos].y; cpos++;
+          } else {
+            x = padEdge + rnd() * (W - padEdge * 2);
+            y = padEdge + rnd() * (H - padEdge * 2);
+          }
+
+          x = clamp(x, padEdge, W - padEdge);
+          y = clamp(y, padEdge, H - padEdge);
+
+          const r = (Math.max(dw, dh) * 0.55) + OBJ_PAD;
+
+          let ok = true;
+          for (let i = 0; i < objs.length; i++) {
+            const o = objs[i];
+            const dx2 = x - o.x;
+            const dy2 = y - o.y;
+            const d2 = dx2 * dx2 + dy2 * dy2;
+
+            let need = r + o.r;
+            if (o.idx === idx) need += OBJ_SAME_EXTRA;
+            if (d2 < need * need) { ok = false; break; }
+          }
+          if (!ok) continue;
+
+          const fade = (rnd() < OBJ_FADE_RATIO);
+          const per = OBJ_FADE_PERIOD_MIN + (OBJ_FADE_PERIOD_MAX - OBJ_FADE_PERIOD_MIN) * rnd();
+          const ph = rnd() * Math.PI * 2;
+
+          objs.push({
+            idx,
+            x: x | 0,
+            y: y | 0,
+            dw: dw | 0,
+            dh: dh | 0,
+            r,
+            fade,
+            per,
+            ph
+          });
+        }
+      }
+
+      function drawObjects(t) {
+        for (let i = 0; i < objs.length; i++) {
+          const o = objs[i];
+          const im = imgs[o.idx];
+
+          if (o.fade) {
+            const s = 0.5 + 0.5 * Math.sin((t * (Math.PI * 2) / o.per) + o.ph);
+            const a = OBJ_FADE_MIN_A + (OBJ_FADE_MAX_A - OBJ_FADE_MIN_A) * s;
+            ctx.globalAlpha = a;
+          } else {
+            ctx.globalAlpha = 1;
+          }
+
+          ctx.drawImage(
+            im,
+            (o.x - o.dw / 2) | 0,
+            (o.y - o.dh / 2) | 0,
+            o.dw | 0,
+            o.dh | 0
+          );
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      let t0 = performance.now();
+      function frame(now) {
+        const t = (now - t0) / 1000;
+        drawStars(t);
+        drawObjects(t);
+        requestAnimationFrame(frame);
+      }
+
+      function loadOne(src) {
+        return new Promise((resolve) => {
+          const im = new Image();
+          im.onload = () => resolve({ ok: true, im, src });
+          im.onerror = () => resolve({ ok: false, src });
+          im.src = src;
+        });
+      }
+
+      async function loadAll() {
+        const res = await Promise.all(files.map(loadOne));
+        imgs = res.filter(x => x.ok).map(x => x.im);
+
+        if (!imgs.length) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, cv.width, cv.height);
+          ctx.fillStyle = "#fff";
+          ctx.font = "16px monospace";
+          ctx.fillText("no sprites loaded", 20, 30);
+          ctx.fillText("check page/sprites/*.png and file names", 20, 55);
+          return;
+        }
+
+        resize();
+        requestAnimationFrame(frame);
+      }
+
+      window.addEventListener('resize', resize, { passive: true });
+      loadAll();
+    };
+    </script>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            if (window.hljs) hljs.highlightAll();
+
+            // 페이지가 iframe 외부에서 직접 열렸는지 확인합니다.
+            if (window.self === window.top) {
+                // 직접 열렸을 경우, body에 클래스를 추가하여 배경과 레이웃을 변경합니다.
+                document.body.classList.add('standalone-post');
+                runStarfield();
+            }
+        });
+    </script>
+</body>
+
+</html>

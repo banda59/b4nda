@@ -2,62 +2,74 @@
 title: "Road to Windows Minifilter Drivers (CVE-2024-30085)"
 date: "2025-08-15"
 tags: ["Windows"]
-excerpt: "Windows Minifilter Driver 분석&1-day"
+excerpt: "Windows Minifilter Driver analysis and 1-day vulnerability reproduction"
+externalUrl: "https://hackyboiz.github.io/2025/08/15/banda/Minifilter-Driver/en/"
 ---
-최근 Windows Kernel Driver을 공부하다가 Bus Driver, Filter Driver, FSD, Minifilter와 같은 목적에 따른 다양한 드라이버 종류가 있다는 사실을 알게 되었습니다.. 저는 기존의 Function Driver와 달리 Bus Driver이나 Filter Driver에서의 구조 차이와, 취약점이 어떤 방식으로 나타나는지 궁금했는데요.
 
-오늘은 Minifilter Driver 구조와 동작 방식, 내부 구성요소와 취약점을 분석해보도록 하겠습니다!
+Hello, this is banda. This is my first time greeting you with an article on Windows Minifilter Drivers. 🤗
 
-![](./post01/image1.png)
+While studying Windows Kernel Drivers recently, I discovered that there are various types of drivers categorized by purpose, such as Bus Drivers, Filter Drivers, FSDs, and Minifilters. I became curious about the structural differences between Bus or Filter Drivers and traditional Function Drivers, as well as how vulnerabilities manifest in these different types.
+
+Today, we will explore the structure and operation of Minifilter Drivers, examine their internal components, and analyze potential vulnerabilities.
+
+![](/2025/08/15/banda/Minifilter-Driver/en/image1.png)
 
 # 1. About Minifilter Drivers
 
 ---
 
-Minifilter 드라이버는 Windows에서 파일 생성, 열기, 읽기, 쓰기, 삭제와 같은 파일 시스템 I/O 요청을 모니터링하거나 가로채고 변경할 수 있도록 설계된 특수한 목적의 드라이버로, 파일 시스템 활동을 정밀하게 모니터링하는 데에 사용됩니다.
+A Minifilter driver is a specialized type of driver in Windows designed to monitor, intercept, and modify file system I/O requests such as file creation, opening, reading, writing, and deletion. It is commonly used for precise monitoring of file system activity.
 
-“파일 접근을 감시하고, 차단하거나 수정하는 것”을 생각해보면… 잠시만요. **Antivirus, EDR, 백업 프로그램**과 같이 가로채고 모니터링하는 것이 주 목적인 제품에 적합해 보이지 않나요? 맞습니다. 실제로 상당수의 해당 제품들이 Minifilter 드라이버를 사용하고 있는 것을 실제로 제가 확인할 수 있었는데요.
+If you think about it in terms of **"monitoring, blocking, or modifying file access"**, it starts to sound familiar, doesn’t it? Indeed — this functionality is well-suited for products like **antivirus software, EDR solutions, and backup programs**. In fact, I’ve personally confirmed that many such products rely on Minifilter drivers.
 
-Minifiler 드라이버는 다음 세 가지 종류의 요청을 가로채거나 조작할 수 있습니다.
+A Minifilter driver can intercept or manipulate the following three types of requests:
 
 1. IRP (I/O Request Packet)
 2. Fast I/O
 3. File System Filter Callbacks
 
-## 1.1 Filter Manager → Minifilter 흐름
+## 1.1 Filter Manager → Minifilter Flow
 
-Minifilter는 Windows의 Filter Manager(`fltmgr.sys`) 위에서 동작합니다. Filter Manager는 I/O Manager로부터 전달된 파일 I/O 요청을, 등록된 Minifilter 드라이버에게 Altitude 순서로 전달합니다. 즉, Altitude를 통해 로딩 순서를 제어할 수 있습니다.
+A Minifilter operates on top of the Windows Filter Manager (`fltmgr.sys`). The Filter Manager receives file I/O requests from the I/O Manager and forwards them to the registered Minifilter drivers in the order determined by their **altitude**. In other words, the altitude controls the order in which filters are loaded and invoked.
 
-![](./post01/image2.gif)
+![](/2025/08/15/banda/Minifilter-Driver/en/image2.gif)
 
-Windows에서 파일 I/O 요청이 처리되는 흐름을 확인해봅시다.
+Let’s take a look at how file I/O requests are processed in Windows.
 
-1. 애플리케이션이 `CreateFile`, `ReadFile`, `WriteFile`같은 API를 호출하는 I/O 작업을 요청합니다.
-2. I/O Manager이 이 요청을 받아 Filter Manager(`fltmgr.sys`)로 전달합니다.
-3. Filter Manager는 등록된 모든 Minifilter 드라이버 목록을 확인하고, Altitude 순서대로 각 드라이버에 요청을 전달합니다.
-4. Minifilter이 작업을 수행한 뒤, 요청은 파일 시스템 Filter 드라이버로 전달됩니다.
-5. 마지막으로 요청은 디스크 드라이버(Storage Driver Stack)에 전달되어 실제 디스크에 접근하거나 데이터를 처리하게 됩니다.
+1. An application issues an I/O operation by calling APIs such as `CreateFile`, `ReadFile`, or `WriteFile`.
+2. The I/O Manager receives this request and forwards it to the Filter Manager (`fltmgr.sys`).
+3. The Filter Manager checks the list of all registered Minifilter drivers and passes the request to each driver in the order of their altitude.
+4. After the Minifilter completes its processing, the request is passed on to the file system filter driver.
+5. Finally, the request is delivered to the disk driver (Storage Driver Stack), which accesses the physical disk or processes the data accordingly.
 
-![](./post01/image3.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image3.png)
 
-참고로 시스템에 로드된 Minifilter 목록은 cmd창의 fltmc 명령으로 확인할 수 있습니다. Altitude 값이 높을수록 우선순위가 높아져 I/O 요청을 먼저 가로채거나 조작할 수 있습니다. 단, 처리 순서는 사전 연산, 사후 연산에 따라 다릅니다.
+You can check the list of Minifilter drivers loaded on the system by running the `fltmc` command in the Command Prompt.
 
-- **사전 연산(Pre-operation)**: Altitude가 **높은 순서 → 낮은 순서**로 호출
-- **사후 연산(Post-operation)**: Altitude가 **낮은 순서 → 높은 순서**로 호출
+The higher the altitude value, the higher the priority, meaning the Minifilter can intercept or modify I/O requests earlier. However, the processing order differs depending on whether it is a pre-operation or post-operation callback.
 
-> 다시 돌아와 위 전체적인 흐름을 확인해보면… Minifilter 드라이버는 기존의 방식처럼 IRP를 직접 처리하지 않습니다. 대신, FilterManager가 I/O 요청을 대신 받아서 Minifilter에게 콜백 함수로 전달합니다.
-> 
-> 
-> 다시말해 Minifilter 드라이버는 우리가 흔히 알고있는 **DispatchRoutine을 설정할 필요가 없는 것이죠!**
-> 
+- **Pre-operation**: Called in **descending altitude order** (high → low)
+- **Post-operation**: Called in **ascending altitude order** (low → high)
+
+Looking back at the overall flow… a Minifilter driver does not directly handle IRPs in the traditional way.
+
+Instead, the Filter Manager receives I/O requests on its behalf and passes them to the Minifilter through callback functions.
+
+In other words, a Minifilter driver does **not** need to set up the **DispatchRoutine** that we commonly associate with traditional drivers!
 
 ## 1.2 Minifilter Callback Routine
 
-Minifilter 드라이버는 어떻게 특정 파일 작업에 대해서만 동작할 수 있을까요? 이는 콜백(Callback)이라는 메커니즘 덕분입니다.
+How can a Minifilter driver operate only on specific file operations?
 
-Minifilter 드라이버는 **DispatchRoutine**을 통해 IRP를 직접 처리하지 않는다고 했죠? 그 대신, Filter Manager를 통해 전달되는 I/O 요청에 “훅(hook)”을 걸 수 있습니다. Minifilter는 이 요청들이 발생할 때 사전 콜백(`PreOperation Callback`)과 사후 콜백(`PostOperation Callback`)을 등록하여, 감시하고자 하는 I/O 작업을 시스템 수준에서 관찰하거나 제어할 수 있습니다.
+This is possible thanks to a mechanism called **callbacks**.
 
-- **사전 작업 콜백 (`PFLT_PRE_OPERATION_CALLBACK`)**
+As mentioned earlier, a Minifilter driver does **not** directly process IRPs through a `DispatchRoutine`.
+
+Instead, it can “hook” I/O requests delivered via the Filter Manager.
+
+By registering **pre-operation (`PreOperation Callback`)** and **post-operation (`PostOperation Callback`)** callbacks, a Minifilter can monitor or control I/O operations at the system level when they occur.
+
+- **Pre-operation callback (`PFLT_PRE_OPERATION_CALLBACK`)**
 
 ```c
 PFLT_PRE_OPERATION_CALLBACK PfltPreOperationCallback;
@@ -70,10 +82,15 @@ FLT_PREOP_CALLBACK_STATUS PfltPreOperationCallback(
 {...}
 ```
 
-I/O 요청이 파일 시스템이나 하위 드라이버로 전달되기 이전에 호출됩니다. Minifilter의 핵심 로직이 수행되는 곳으로 `FLT_PREOP_COMPLETE`, `FLT_PREOP_SUCCESS_WITH_CALLBACK`, `FLT_PREOP_SUCCESS_NO_CALLBACK`과 같은 강력한 권한을 가지고 있습니다. 
+Called before the I/O request is passed to the file system or lower drivers.
+
+This is where the core logic of the Minifilter runs, with powerful capabilities such as returning
+
+`FLT_PREOP_COMPLETE`, `FLT_PREOP_SUCCESS_WITH_CALLBACK`, or `FLT_PREOP_SUCCESS_NO_CALLBACK`.
+
 [**PFLT_PRE_OPERATION_CALLBACK callback function (fltkernel.h)**](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_pre_operation_callback)
 
-- **사후 작업 콜백 (`PFLT_POST_OPERATION_CALLBACK`)**
+- **Post-operation callback (`PFLT_POST_OPERATION_CALLBACK`)**
 
 ```c
 PFLT_POST_OPERATION_CALLBACK PfltPostOperationCallback;
@@ -87,15 +104,23 @@ FLT_POSTOP_CALLBACK_STATUS PfltPostOperationCallback(
 {...}
 ```
 
-I/O 요청이 하위 드라이버와 파일 시스템에서 처리를 모두 마치고 돌아오는 길에 호출됩니다. 작업의 성공 여부를 확인하거나, 결과를 로깅하거나, 필요하다면 작업 결과를 수정하는 등의 후처리 작업을 수행합니다.
+Called on the way back after the I/O request has been fully processed by lower drivers and the file system.
+
+It is typically used to verify the success of the operation, log results, or modify the outcome if needed.
+
 [**PFLT_POST_OPERATION_CALLBACK callback function (fltkernel.h)**](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nc-fltkernel-pflt_post_operation_callback)
 
-> 결과적으로, 이 콜백들은 `FLT_OPERATION_REGISTRATION`이라는 구조체에 “어떤 I/O 작업(MajorFunction)에 어떤 사전/사후 콜백 함수를 연결할지”를 명시해 등록합니다.
-> 
+In short, these callbacks are registered in the `FLT_OPERATION_REGISTRATION` structure, which specifies **which pre-/post-operation callbacks are associated with which I/O operations (MajorFunctions)**.
 
-## 1.3 Minifilter와 User-Mode 간의 통신
+---
 
-Minifilter 드라이버와 User-Mode 애플리케이션 간의 통신은 **필터 통신 포트**를 통해 이루어집니다. 통신 포트란, Minifilter와 앱 사이의 전용 고속 통신 채널입니다. 이 포트는 Kernel Mode 드라이버와 User-Mode 프로세스 간의 안전한 메시지 전달을 가능하게 합니다. 코드를 직접 확인해보며 Microsoft가 제공하는 여러 API를 확인해봅시다!
+## 1.3 Communication Between Minifilter and User-Mode
+
+Communication between a Minifilter driver and a User-Mode application is handled via a **filter communication port**.
+
+This port acts as a dedicated high-speed communication channel between the Minifilter and the application, allowing safe message exchange between Kernel-Mode drivers and User-Mode processes.
+
+Let’s look into the code and explore the APIs provided by Microsoft for this purpose.
 
 ### Driver Code
 
@@ -162,13 +187,21 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 }
 ```
 
-대표적인 Driver Code API인 `FltCreateCommunicationPort()`, `FltSendMessage()`, `FltCloseCommunicationPort()`에 초점을 맞춰서 Minifilter 드라이버 코드를 예제로 구현해보았는데요. 흐름을 함께 살펴볼까요?
+Focusing on the representative driver code APIs `FltCreateCommunicationPort()`, `FltSendMessage()`, and `FltCloseCommunicationPort()`, I have implemented an example Minifilter driver code.
 
-1. 드라이버는 `FltRegisterFilter()`를 통해 자신을 등록합니다. 이때 파일 생성과 열기(`IRP_MJ_CREATE`) 요청을 감시할 PreCreateCallback 함수를 지정하고, `FltStartFiltering()`으로 I/O 감시를 시작합니다.
-2. `FltCreateCommunicationPort()` 함수를 통해 통신 포트를 생성할 수 있는데요, 위의 코드에서는 User-Mode 애플리케이션이 연결하고 알림을 받을 수 있는 통신 포트 `\\FileActivityMonitorPort`를 생성하고 있습니다.
-3. 만약 파일 생성/열기 이벤트가 발생하면 PreCreateCallback이 호출되고, 해당 함수는 어떤 프로세스가 어떤 파일에 접근했는지 정보를 수집합니다.
-4. 이후 `FltSendMessage()` 함수를 사용해 PreCreateCall에서 수집한 실시간 파일 접근 정보를 연결되어있는 User-Mode 애플리케이션으로 즉시 전송합니다.
-5. 마지막으로 FilterUnload 언로드 함수를 통해 드라이버가 종료될 때, 열었던 통신 포트를 `FltCloseCommunicationPort()`로 닫고 필터 등록을 해제합니다.
+Let’s walk through the flow together:
+
+1. The driver registers itself using `FltRegisterFilter()`.
+    
+    At this stage, it specifies a **PreCreateCallback** function to monitor file creation and open (`IRP_MJ_CREATE`) requests, and starts I/O monitoring with `FltStartFiltering()`.
+    
+2. Using the `FltCreateCommunicationPort()` function, the driver can create a communication port.
+    
+    In the code above, it creates the port `\\FileActivityMonitorPort`, which allows a User-Mode application to connect and receive notifications.
+    
+3. When a file create/open event occurs, **PreCreateCallback** is invoked, and the function collects information about which process accessed which file.
+4. The driver then uses `FltSendMessage()` to immediately send the real-time file access information collected in **PreCreateCallback** to the connected User-Mode application.
+5. Finally, in the **FilterUnload** routine, when the driver is unloaded, it closes the communication port with `FltCloseCommunicationPort()` and unregisters the filter.
 
 ### User-Mode Application Code
 
@@ -212,35 +245,60 @@ int main() {
 }
 ```
 
-이제 User-Mode 애플리케이션의 통신 흐름을 확인해봅시다. 대표적인 API로 `FilterConnectCommunicationPort()`, `FilterSendMessage()`가 존재합니다.
+Let’s now look at the communication flow from the User-Mode application side.
 
-1. 먼저 `FilterConnectCommunicationPort()` 함수를 사용해 커널에 있는 Minifilter 드라이버의 통신 포트인 `\\FileActivityMonitorPort`에 연결하고 통신을 위한 HANDLE을 얻습니다.
-2. 그 후 `FilterGetMessage()` 함수를 호출하여, 드라이버로부터 파일 경로 문자열을 직접 수신합니다. 성공적으로 수신되면 해당 파일 경로를 화면에 출력합니다.
+Representative APIs include `FilterConnectCommunicationPort()` and `FilterSendMessage()`.
+
+1. First, the application uses `FilterConnectCommunicationPort()` to connect to the Minifilter driver’s communication port in the kernel, `\\FileActivityMonitorPort`, and obtains a HANDLE for communication.
+2. It then calls `FilterGetMessage()` to directly receive the file path string from the driver.
+    
+    If the message is received successfully, the application outputs the file path to the screen.
+    
 
 # 2. [CVE-2024-30085] 1-Day Analysis
 
 ---
 
-하루한줄에도 소개되었던 Windows Minifilter Driver 취약점인데요([reference](https://hackyboiz.github.io/2025/01/11/OUYA77/2025-01-11/)). CVE-2024-30085를 직접 재현해보며 Minifilter 드라이버를 함께 알아가보도록 합시다.
+This is a Windows Minifilter Driver vulnerability that was also introduced in “1day1line” ([reference](https://hackyboiz.github.io/2025/01/11/OUYA77/2025-01-11/)).
 
-> **🪟 Environment : Windows 11 22h2/23h2 10.0.2261.3672**
+Let’s try to reproduce CVE-2024-30085 and, in the process, learn more about Minifilter drivers.
+
+> 🪟 Environment: Windows 11 22H2/23H2 10.0.2261.3672
 > 
 
-![](./post01/image4.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image4.png)
 
-Windows Cloud Files Mini Filter 드라이버는 Windows 클라우드 동기화 기능을 수행합니다. 예시로 지금 저의 폴더를 하나 찍어왔는데요, 오늘은 해당 Minifilter 드라이버 취약점을 이해하기 위해 먼저 Stub File, Reparse Point에 대한 사전 공부가 필요합니다.
+The Windows Cloud Files Mini Filter driver is responsible for the Windows cloud sync feature.
 
-### Stub File이란?
+For example, I’ve taken a screenshot of one of my folders.
 
-Stub File은 로컬에는 실제로 데이터가 없고, placeholder 형태로 존재하는 파일을 의미합니다. 위의 이미지를 확인해보면 ‘사진’ 폴더에 파란색 구름 아이콘이 status로 나타나있죠? 바로 해당 파일이 stub 상태라고 볼 수 있어요. NTFS 상에서 파일 크기, 이름, 아이콘 등은 표시하지만, 파일 내용은 전혀 저장되어 있지 않습니다.
+To understand this Minifilter driver vulnerability, we first need some background knowledge about Stub Files and Reparse Points.
+
+### What is a Stub File?
+
+A stub file refers to a file that exists only as a placeholder locally, without containing any actual data.
+
+As shown in the image above, the “Pictures” folder has a blue cloud icon in its status — this indicates that the file is in a stub state.
+
+On NTFS, its size, name, and icon are displayed, but its actual contents are not stored locally.
 
 ### Reparse Point Metadata
 
-그럼 사용자가 이러한 파일에 접근하면 어떻게 될까요!? NTFS는 Reparse Tag를 보고 **“오호… 이건 stub file이네!”**라고 판단합니다. 이때 Windows Cloud Files Minifilter(`cldflt.sys`)가 이 `Reparse Point` 메타데이터 구조체를 읽고, 이 파일을 어떻게 처리할지 결정하는 것이죠.
+So, what happens when a user tries to access such a file?
 
-이후 Minifilter은 원격 서버와 통신을 준비하는데, `cldflt.sys`는 직접 서버와 통신하지 않습니다. User-Mode 프로세스에 실제 작업을 위임해버리는데요. 위에서 보았던 Minifilter이 I/O Interpreter 역할을 수행하고, 실제 데이터 조작은 User-Mode 클라이언트가 담당한다는 개념과 일치하죠? (오.. 신기하네요.)
+NTFS checks the Reparse Tag and determines, **“Oh… this is a stub file!”**.
 
-Windows Cloud Files Minifilter의 Reparse Point 구조체를 Local Types에 추가했는데요, 제가 정의한 CldFlt 구조체 세트를 함께 확인해봅시다.
+At this point, the Windows Cloud Files Minifilter (`cldflt.sys`) reads the `Reparse Point` metadata structure and decides how to handle the file.
+
+After that, the Minifilter prepares for communication with the remote server.
+
+However, `cldflt.sys` itself does not communicate directly with the server — instead, it delegates the actual work to a User-Mode process.
+
+This matches the concept we saw earlier: the Minifilter plays the role of an I/O interpreter, while the User-Mode client handles the actual data manipulation.
+
+I’ve added the Windows Cloud Files Minifilter’s Reparse Point structure definitions to Local Types.
+
+Let’s take a look at the CldFlt structure set I defined.
 
 ```c
 typedef struct _REPARSE_DATA_BUFFER {
@@ -253,22 +311,28 @@ typedef struct _REPARSE_DATA_BUFFER {
 } REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
 ```
 
-먼저 `REPARSE_DATA_BUFFER`는 NTFS의 모든 Reparse Point 데이터를 표현하는 표준 헤더 구조체이지만, 여기서 사용할 구조체는 Cloud Files를 쉽게 분석하기 위해 재정의한 버전입니다. 이 구조체는 `ReparseTag`로 소유 드라이버를 식별하고 `ReparseDataLength`, `Flags` 같은 최상위 메타정보를 담으며, 실제 데이터는 `HSM_REPARSE`로 이어지는 것을 확인할 수 있습니다.
+`REPARSE_DATA_BUFFER` is the standard header structure used to represent all Reparse Point data on NTFS.
+
+Here, however, we use a redefined version to make analyzing Cloud Files easier.
+
+This structure stores top-level metadata such as `ReparseTag` (to identify the owning driver), `ReparseDataLength`, and `Flags`, and then points to the actual data, which continues as an `HSM_REPARSE` structure.
 
 ```c
-struct HSM_REPARSE
-{
+struct HSM_REPARSE {
     USHORT hsmFlags;
     USHORT hsmSize;
     struct HSM_RP_DATA fileData;
 };
 ```
 
-`HSM_REPARSE`는 Cloud Files 전용 Reparse Point 전체 컨테이너입니다. `hsmFlags`와 `hsmSize`로 압축 여부와 HSM 블록 전체 크기를 나타내고, `fileData` 필드에 `HSM_RP_DATA` 구조체를 포함하고 있습니다.
+`HSM_REPARSE` is the full container for a Cloud Files-specific Reparse Point.
+
+`hsmFlags` and `hsmSize` indicate whether compression is used and the total size of the HSM block.
+
+The `fileData` field contains an `HSM_RP_DATA` structure.
 
 ```c
-struct HSM_RP_DATA 
-{       
+struct HSM_RP_DATA {
     ULONG magic;
     ULONG crc32;
     ULONG totalSize;
@@ -278,11 +342,14 @@ struct HSM_RP_DATA
 };
 ```
 
-이어서 `HSM_RP_DATA` 구조체는 메인 헤더로, 전체 메타데이터 블록의 구조와 위치를 담고 있습니다. magic을 통해 데이터 종류를 식별하고, crc32를 통해 `dataFlags`에 CRC 존재 비트가 설정되면 `RtlComputeCrc32`로 검증합니다. elements[] 배열에는 `HSM_RP_ELEMENT` 구조체들이 저장되어 각 메타데이터 요소의 유형, 크기, 오프셋을 정의합니다.
+`HSM_RP_DATA` is the main header, containing the layout and structure of the entire metadata block.
+
+`magic` identifies the data type, and if the CRC bit is set in `dataFlags`, `crc32` is validated using `RtlComputeCrc32`.
+
+The `elements[]` array stores `HSM_RP_ELEMENT` structures that define the type, size, and offset of each metadata element.
 
 ```c
-struct HSM_RP_ELEMENT 
-{               
+struct HSM_RP_ELEMENT {
     USHORT elemType;
     USHORT elemSize;
     ULONG elemOffset;
@@ -298,40 +365,44 @@ typedef enum HSM_RP_ELEM_TYPE {
 } HSM_RP_ELEMENT_TYPE;
 ```
 
-이후 `HSM_RP_ELEMENT`에서는 개별 메타데이터 요소의 type, size, offset을 정의하며, `HSM_RP_ELEMENT_TYPE` 값으로 유형을 구분하는 양상을 확인할 수 있습니다.
+`HSM_RP_ELEMENT` defines each individual metadata element’s type, size, and offset.
+
+The `HSM_RP_ELEMENT_TYPE` enumeration is used to classify element types.
 
 ## 2.1 Root Cause Analysis
 
-![](./post01/image5.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image5.png)
 
-취약점은 파일을 생성해 `HsmFltPostCREATE` 콜백이 실행되어 해당 파일의 Reparse Point를 처리할 때,  `HsmFltPostCREATE` 내부에서 Reparse Point에 담긴 bitmap 정보를 처리하기 위해 호출되는 `HsmIBitmapNORMALOpen()` 함수에서 발생합니다.
+The vulnerability occurs when a file is created and the `HsmFltPostCREATE` callback is executed to process the file’s Reparse Point.
 
-- `bitmap_size`는 User-Mode 요청 버퍼에서 읽어온 값입니다.
-- 크기 0x1000으로 고정 할당한 버퍼 `ExAllocatePoolWithTag`에 대해, 사용자가 제어 가능한 `bitmap_size`를 경계 검사 없이 그대로 `memmove`에 전달하여 복사하고 있습니다.
+Within `HsmFltPostCREATE`, when handling the bitmap information stored in the Reparse Point, the function `HsmIBitmapNORMALOpen()` is called — and this is where the flaw exists.
 
-따라서 만약 `bitmap_size` > 0x1000인 경우, Heap-based Buffer Overflow가 발생하게 될 것으로 예상해볼 수 있습니다!
+- `bitmap_size` is read directly from the User-Mode request buffer.
+- A fixed-size buffer of 0x1000 bytes is allocated via `ExAllocatePoolWithTag`, but the user-controlled `bitmap_size` value is passed directly to `memmove` without any boundary checks.
 
-![](./post01/image6.png)
+Therefore, if `bitmap_size` is greater than 0x1000, a Heap-based Buffer Overflow is expected to occur.
 
-`HsmpBitmapIsReparseBufferSupported()` 함수를 확인해보면 `hdr->elements[4].elemSize` 값이 0x1000보다 크면 오류를 반환하는데요. 
+![](/2025/08/15/banda/Minifilter-Driver/en/image6.png)
 
-![](./post01/image7.png)
+Looking at the `HsmpBitmapIsReparseBufferSupported()` function, it returns an error if `hdr->elements[4].elemSize` is greater than `0x1000`.
 
-조금 더 위로 올라가서 조건문 코드를 확인해보면 `hdr->elements[2]`를 엄격하게 검증하고 있는 것을 확인할 수 있습니다. `total ≥ 0x18`, `hdr→elemCount` 등의 경계 체크를 모두 통과해야 진행이 되는군요.. 이 조건을 충족하지 못하면 fail을 반환하겠죠?
+![](/2025/08/15/banda/Minifilter-Driver/en/image7.png)
 
-![](./post01/image8.png)
+Looking a bit further up at the conditional statement code, we can see that `hdr->elements[2]` is being strictly validated. Checks such as `total ≥ 0x18` and `hdr->elemCount` boundary verification must all be passed in order to proceed. If these conditions are not met, it would return a failure, right?
 
-그런데 동일 함수에 `hasBuf`가 false로 설정되어 있으면, 별도의 비트맵 길이 검사를 수행하지 않고 `element[1]`의 1바이트 플래그만 확인해도 result = 0으로 success를 반환하는 코드가 있습니다. 이 경로에서는 비트맵의 길이가 0x1000보다 큰지 검사가 수행되지 않기 때문에, 검증이 건너뛰어지면서 데이터가 유효한 것으로 처리되어 버립니다.
+![](/2025/08/15/banda/Minifilter-Driver/en/image8.png)
+
+However, in the same function, if `hasBuf` is set to `false`, the code returns `result = 0` (success) simply by checking the 1-byte flag of `element[1]`, without performing any separate bitmap length validation. In this path, there is no check to determine whether the bitmap length exceeds `0x1000`, so the validation is skipped and the data is treated as valid.
 
 ## 2.2 Exploit
 
-![](./post01/image9.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image9.png)
 
-cldflt.sys 미니필터 드라이버는 기본적으로 모든 파일 시스템 I/O를 훑는게 아니라, CfAPI를 통한 Sync Root 경로에 대해서만 동작합니다. 따라서 먼저 `CfRegisterSyncRoot()` 함수를 통해 클라우드 동기화 폴더의 Root 디렉터리에 도달해보았습니다!
+The `cldflt.sys` minifilter driver does not scan all file system I/O by default; instead, it only operates on paths within the Sync Root that are registered through the CfAPI. Therefore, the first step was to reach the root directory of a cloud sync folder by calling the `CfRegisterSyncRoot()` function.
 
-![](./post01/image10.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image10.png)
 
-Sync Root를 등록하는 코드를 우선 빌드하고 실행해보면 이런 폴더가 생기는데요. 이 폴더 내부에는 클라우드 Stub File, 메타데이터가 생길 수 있고, 제가 이걸 악용할 수 있는 지점이 됩니다.
+Once the Sync Root registration code is built and executed, such a folder is created. Inside this folder, cloud stub files and metadata may appear, and this becomes the point I can exploit.
 
 ```c
 -> HsmFltPostCREATE()
@@ -339,95 +410,139 @@ Sync Root를 등록하는 코드를 우선 빌드하고 실행해보면 이런 �
 -> HsmpSetupContexts()
 -> HsmpCtxCreateStreamContext()
 -> HsmIBitmapNORMALOpen()
+
 ```
 
-동적 분석을 통해 확인해본 결과, 취약한 함수인 `HsmIBitmapNORMALOpen()` 함수로 진입하려면 위와 같은 함수 체인을 순차적으로 통과하면서 조건문을 모두 충족해야 진입할 수 있음을 알게 되었습니다. 이제 저의 목표는 조건을 모두 충족해서 `HsmIBitmapNORMALOpen()` 함수의 취약한 `memmove`에 도달하는 것입니다. 
+Through dynamic analysis, it was confirmed that in order to reach the vulnerable function `HsmIBitmapNORMALOpen()`, the execution must sequentially pass through the above function chain and satisfy all conditional checks. My goal, therefore, is to fulfill all those conditions and reach the vulnerable `memmove` inside `HsmIBitmapNORMALOpen()`.
 
-> **Minifilter Driver로서의 흐름 이해**
+> Understanding the Flow as a Minifilter Driver
 > 
 
-앞서 Minifilter 드라이버는 I/O 요청이 발생했을 때 IRP 코드별로 Callback을 호출한다고 했죠? 취약점 경로에 진입하기 위해 `IRP_MJ_CREATE`의 `Post-Create Callback`(`HsmFltPostCREATE`)를 시작으로 순차적으로 함수에 도달해야 합니다. 이 중간 함수들은 파일/스트림 속성과 Reparse Point 정보를 기반으로 진입 조건을 검증하므로, 저희는 이를 우회하는 특수한 파일 구조를 만들면 되는 겁니다!
+Earlier, I mentioned that a minifilter driver calls specific callbacks depending on the IRP code when an I/O request occurs. To enter the vulnerable path, the process must begin at the `IRP_MJ_CREATE` Post-Create Callback (`HsmFltPostCREATE`) and proceed sequentially to the target function. These intermediate functions validate entry conditions based on file/stream attributes and Reparse Point information, so we can bypass them by crafting a special file structure.
 
-1. `MakeDataBuffer()`로 `IO_REPARSE_TAG_CLOUD` 구조 생성 → Minifilter가 해당 파일을 Cloud Stub File로 인식해 Reparse Point 파싱 로직 진입.
-2. Item Tag = `0x11`(Bitmap) → `Size`를 `0x1000 + overSize`로 설정해 `memmove()`에서 할당 크기를 초과한 복사(Heap Overflow) 유발. 다른 요소들(Tag `0x7`, `0x6`, `0xA` 등)도 Minifilter의 경계 체크를 통과하도록 값 설정.
-3. Overflow 데이터에 Fake 커널 객체 포인터 포함 → `FSCTL_SET_REPARSE_POINT`로 적용 후 `CreateFile()` 호출 시 `HsmIBitmapNORMALOpen()` 진입
+1. Use `MakeDataBuffer()` to create an `IO_REPARSE_TAG_CLOUD` structure → The minifilter recognizes the file as a cloud stub file and enters the Reparse Point parsing logic.
+2. Set Item Tag = `0x11` (Bitmap) → Configure `Size` to `0x1000 + overSize` to trigger a heap overflow in `memmove()` by copying more than the allocated size. Ensure that other elements (Tags `0x7`, `0x6`, `0xA`, etc.) are also set to pass the minifilter’s boundary checks.
+3. Include a fake kernel object pointer in the overflow data → Apply it with `FSCTL_SET_REPARSE_POINT`, then trigger `HsmIBitmapNORMALOpen()` by calling `CreateFile()`.
 
-![](./post01/image11.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image11.png)
 
-조건을 충족하면 FltMgr로부터 시작해 `HsmIBitmapNORMALOpen()`에 진입하는 것을 확인할 수 있습니다!
+When these conditions are met, we can confirm that the flow starts from `FltMgr` and reaches `HsmIBitmapNORMALOpen()`.
 
-Exploit 과정을 전부 담고싶지만 오늘은 Minifilter 설명 글이고 벌써 분량 조절에 실패해버린 것 같으니.. 전체 exploit 시나리오를 한번 요약해보겠습니다.
+I’d like to cover the full exploit process, but since today’s focus is on explaining the minifilter and I’ve already gone overboard with the length… let’s wrap up with a summary of the entire exploit scenario.
 
-![](./post01/image12.png)
+![](/2025/08/15/banda/Minifilter-Driver/en/image12.png)
 
-> **Proof of Concept Overview**
+
+> Proof of Concept Overview
 > 
 
-1. **EPROCESS 구조 분석 및 Token 필드 Offset 계산**
-EPROCESS 구조체에서 Token 필드의 오프셋을 계산해 이후 SYSTEM Token swap 준비.
-2. **첫 번째 `WNF_STATE_DATA` Spray 및 Hole 생성**
-0x1000 크기(0xff0 데이터)의 `WNF_STATE_DATA` 오브젝트를 대량으로 생성(spray)하고, 해제해 커널 힙에 Heap Hole 생성.
-3. **취약한 비트맵 파일 오픈 및 첫 번째 Overflow 트리거**
-`CfRegisterSyncRoot()`와 Reparse Point 디렉터리 조작을 통해 Sync Root 내부의 취약한 비트맵 파일을 준비. 이후 `CreateFile()`로 파일을 열어 `IRP_MJ_CREATE()` → `HsmFltPostCREATE()` → `HsmiFltPostECPCREATE()` → `HsmpSetupContexts()` → `HsmpCtxCreateStreamContext()` → `HsmIBitmapNORMALOpen()` 경로까지 진입하고, Heap Overflow를 통해 인접한 `WNF_STATE_DATA`의 DataSize를 변조해 OOB R/W를 확보.
-4. **커널 포인터 Leak**
-변조된 `WNF_STATE_DATA`를 이용해 `_KALPC_RESERVE` **포인터를 읽어 커널 주소 Leak.
-5. **두 번째 `WNF_STATE_DATA` Spray 및 Hole 생성**
-다시 동일 크기의 `WNF_STATE_DATA`를 Spray하고 해제해 Hole을 만든 후, 이번에는 `PipeAttribute` 구조와 인접한 영역에 WNF 객체가 배치되도록 구성.
-6. **두 번째 Overflow를 통해 `PipeAttribute` 조작**
-두 번째 비트맵 파일을 열어 Heap Overflow를 발생시키고, 인접한 `PipeAttribute`의 `Flink` 포인터를 사용자 공간 Fake `PipeAttribute` 구조체 주소로 덮음.
-7. **Arbitrary Read 구성 및 EPROCESS/Token 주소 획득**
-Fake `PipeAttribute`를 이용해 ALPC Port 구조체에 접근하고, 이를 통해 대상 프로세스의 EPROCESS 주소와 Token 주소를 순차적으로 read.
-8. **Token Swapping 및 SYSTEM 권한 획득**
-Arbitrary Write를 통해 현재 프로세스의 Token 값을 SYSTEM Token 값으로 교체하고, SYSTEM 권한의 `cmd.exe`를 실행.
+1. **EPROCESS Structure Analysis and Token Field Offset Calculation**
+    
+    Calculate the offset of the Token field within the EPROCESS structure to prepare for the subsequent SYSTEM token swap.
+    
+2. **First `WNF_STATE_DATA` Spray and Hole Creation**
+    
+    Mass-allocate (`spray`) `WNF_STATE_DATA` objects of size 0x1000 (0xff0 data) and then free them to create heap holes in the kernel heap.
+    
+3. **Open Vulnerable Bitmap File and Trigger First Overflow**
+    
+    Use `CfRegisterSyncRoot()` and manipulate the Reparse Point directory to prepare a vulnerable bitmap file within the Sync Root. Then, open the file with `CreateFile()` to reach the path:
+    
+    `IRP_MJ_CREATE()` → `HsmFltPostCREATE()` → `HsmiFltPostECPCREATE()` → `HsmpSetupContexts()` → `HsmpCtxCreateStreamContext()` → `HsmIBitmapNORMALOpen()`
+    
+    Trigger a heap overflow to modify the `DataSize` of an adjacent `WNF_STATE_DATA`, gaining OOB (Out-of-Bounds) read/write capability.
+    
+4. **Kernel Pointer Leak**
+    
+    Use the modified `WNF_STATE_DATA` to read the `_KALPC_RESERVE` pointer and leak a kernel address.
+    
+5. **Second `WNF_STATE_DATA` Spray and Hole Creation**
+    
+    Repeat the same spray-and-free process for `WNF_STATE_DATA` objects, but this time arrange for a `PipeAttribute` structure to be placed adjacent to the WNF object.
+    
+6. **Second Overflow to Manipulate `PipeAttribute`**
+    
+    Open a second bitmap file to trigger another heap overflow, overwriting the `Flink` pointer of the adjacent `PipeAttribute` with the address of a user-space fake `PipeAttribute` structure.
+    
+7. **Arbitrary Read to Retrieve EPROCESS/Token Addresses**
+    
+    Use the fake `PipeAttribute` to access the ALPC Port structure, sequentially reading the EPROCESS address and Token address of the target process.
+    
+8. **Token Swapping and SYSTEM Privilege Escalation**
+    
+    Perform an arbitrary write to replace the current process’s Token value with the SYSTEM Token value, then launch `cmd.exe` with SYSTEM privileges.
+    
 
-### ALPC/WNF
+### ALPC / WNF
 
-`_WNF_STATE_DATA`와 `_ALPC_HANDLE_TABLE` 구조체를 이용해 Heap Hole을 위한 Arbitrary size 커널 객체를 할당하고, 커널 메모리 주소를 leak하게 되는데요. 아마도 ALPC와 WNF 개념이 생소하실 겁니다. exploit을 하기 위해 두 sub system을 설명해보면 다음과 같습니다.
+The `_WNF_STATE_DATA` and `_ALPC_HANDLE_TABLE` structures are used to allocate arbitrary-sized kernel objects for heap holes and to leak kernel memory addresses. Since ALPC and WNF might be unfamiliar concepts, here is a brief explanation of the two subsystems relevant to this exploit:
 
 > **ALPC (Asynchronous Local Procedure Call)**
 > 
 
-![](./post01/image13.webp)
+![](/2025/08/15/banda/Minifilter-Driver/en/image13.webp)
 
-ALPC는 Windows 커널 내부의 IPC 메커니즘으로, 클라이언트와 서버 포트를 생성해 메시지를 주고받는 구조를 가지고 있습니다. 이때 ALPC의 HANDLE TABLE의 `_ALPC_HANDLE_ENTRY`를 이용하면 메시지 버퍼 주소를 저장할 수 있는데, 이 TABLE의 크기는 가변적이기 때문에 Arbitrary 크기의 커널 객체를 생성할 수 있게 됩니다!
 
-- ALPC 포트 생성 시 `_ALPC_HANDLE_TABLE`이 **paged pool**에 0x80 크기로 할당됨
-- `NtAlpcCreateResourceReserve` 호출 시마다 `_KALPC_RESERVE` 객체가 생성되고 이 주소가 HANDLE TABLE에 추가됨
-- 이 구조를 변조하면 임의 커널 주소 Read/Write primitive 가능
+ALPC is an inter-process communication (IPC) mechanism within the Windows kernel that uses client and server ports to exchange messages. By leveraging the `_ALPC_HANDLE_ENTRY` in the ALPC handle table, it is possible to store message buffer addresses. Since the size of this table is variable, it allows the creation of kernel objects of arbitrary size.
+
+- When an ALPC port is created, an `_ALPC_HANDLE_TABLE` is allocated in the **paged pool** with a size of 0x80.
+- Each call to `NtAlpcCreateResourceReserve` creates a `_KALPC_RESERVE` object, and its address is added to the handle table.
+- By tampering with this structure, it becomes possible to obtain arbitrary kernel address read/write primitives.
     
-    → PoC에서는 fake `_KALPC_RESERVE`를 주입해 arbitrary R/W 달성
+    → In the PoC, a fake `_KALPC_RESERVE` is injected to achieve arbitrary R/W.
     
-- ALPC HANDLE은 User-Mode에서도 제어 가능 → exploit에 용이해짐
+- ALPC handles can also be controlled from user mode, making them highly useful for exploitation.
 
 > **WNF (Windows Notification Facility)**
 > 
 
-![](./post01/image14.webp)
+![](/2025/08/15/banda/Minifilter-Driver/en/image14.webp)
 
-WNF는 Windows의 알림 시스템인데요. WNF_NAME_INSTANCE 커널 객체는 내부에 _WNF_STATE_DATA라는 필드를 가지는데 이 크기는 가변적이기 때문에 User-Mode에서 `NtCreateWnfStateName` + `NtUpdateWnfStateData`로 직접 커널 객체 크기 제어 가능할 수 있게 됩니다.
 
-- `_WNF_STATE_DATA`는 0x1000 크기로 할당 가능 (0x10 header + 0xFF0 data)
-- heap spraying 용도로 WNF 객체를 다량 생성해, 목표 구조체(ALPC 객체)와 인접하게 배치
-- PoC에서는 WNF를 이용해 heap hole을 만들고 ALPC 객체 인접에 배치하여 ALPC HANDLE TABLE에 Overflow 유도
+WNF is the Windows Notification Facility, and the `WNF_NAME_INSTANCE` kernel object contains an internal `_WNF_STATE_DATA` field whose size is variable. This allows direct control of the kernel object size from user mode using `NtCreateWnfStateName` + `NtUpdateWnfStateData`.
 
-특히 PoC에서는 Pipe를 생성하는 루틴을 등록해야 했는데, 저는 이 부분이 흥미로웠습니다.
+- `_WNF_STATE_DATA` can be allocated with a size of 0x1000 (0x10 header + 0xFF0 data).
+- WNF objects can be mass-created for heap spraying, placing them adjacent to a target structure (e.g., an ALPC object).
+- In the PoC, WNF is used to create heap holes and then place them next to ALPC objects to trigger an overflow into the ALPC handle table.
+
+In particular, the PoC required registering a routine to create a pipe, which I found interesting.
 
 ```c
-struct PipeAttribute { 
-    LIST_ENTRY list; 
-    char * AttributeName; 
-    uint64_t AttributeValueSize; 
-    char * AttributeValue; 
+struct PipeAttribute {
+    LIST_ENTRY list;
+    char *AttributeName;
+    uint64_t AttributeValueSize;
+    char *AttributeValue;
     char data[0];
-}
+};
 ```
 
-Pipe는 변조된 `PipeAttribute` 구조체의 Value 포인터를 커널 메모리 주소로 세팅해 커널이 해당 주소를 참조해 읽은 데이터를 User-Mode 공간에 반환해줄 수 있게 해주는데요. 이로써 ALPC로 확보한 메모리 레이아웃과 WNF Overflow 조합을 이용해 Pipe를 Arbitrary Read primitive로 전환해 커널 주소를 leak할 수 있게 됩니다!
+The pipe is configured so that the `AttributeValue` pointer in the modified `PipeAttribute` structure is set to a kernel memory address. This causes the kernel to read data from that address and return it to user mode. By combining the memory layout control achieved via ALPC with the WNF overflow, the pipe can be turned into an arbitrary read primitive, allowing leakage of kernel addresses.
 
-## 3. 마무리
+# 3. Conclusion
 
 ---
 
-![](./post01/image15.gif)
+![](/2025/08/15/banda/Minifilter-Driver/en/image15.gif)
 
-마무리는 제가 `cldflt.sys`의 Minifilter 드라이버 특성, 그리고 WNF + ALPC 기법을 통해 구현한 LPE 결과를 보여드리며 끝내도록 하겠습니다.
+I’ll wrap up by sharing the results of the LPE I implemented using the characteristics of the `cldflt.sys` Minifilter driver combined with the WNF + ALPC technique.
+
+While studying Minifilters, I realized that although their operation, functions, and concepts may feel a bit unfamiliar, the way vulnerabilities are triggered and their root causes are, in the end, quite similar. So, there’s no need to be too intimidated about diving into Minifilter exploitation!
+
+If I get the chance, I’d like to explore and study various other drivers I haven’t looked into yet. I hope you’ll look forward to my next write-up as well!
+
+# **Reference**
+
+---
+
+https://exploitreversing.com/2023/04/11/exploiting-reversing-er-series/
+
+https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/filter-manager-concepts
+
+https://starlabs.sg/blog/2024/all-i-want-for-christmas-is-a-cve-2024-30085-exploit/
+
+https://ssd-disclosure.com/ssd-advisory-cldflt-heap-based-overflow-pe/
+
+https://reddogsecurity.substack.com/p/elevating-privileges-in-windows-insights?r=5awqb0&utm_campaign=post&utm_medium=web&triedRedirect=true
+
+https://medium.com/@WaterBucket/understanding-mini-filter-drivers-for-windows-vulnerability-research-exploit-development-391153c945d6

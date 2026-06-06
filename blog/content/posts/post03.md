@@ -2,70 +2,85 @@
 title: "VMProtect Devirtualization Deobfuscation Part 02"
 date: "2025-12-11"
 tags: ["VMProtect", "UnpackMe", "Devirtualize", "Rev"]
-excerpt: "VMPortect Devirtualization Challenge WriteUp"
+excerpt: "VMProtect Devirtualization Challenge Write-up"
+externalUrl: "https://hackyboiz.github.io/2025/12/11/banda/VMPpart2/en/"
 ---
+
 
 # Introduction
 
-![](./post03/main.png)
+![](/2025/12/11/banda/VMPpart2/en/main.png)
 
-안녕하세요 banda입니다. :)  
-이번에는 VMProtect Part 2로 돌아왔습니다. 사실 저번 이론 중심의 연구글의 흐름에 이어 part 2는 real-world로 확장해보는 글을 써보고 싶었고, 이번에는 정적 분석과 함께, 실제 VMProtect 3으로 virtualize된 함수들을 devirtualized binary / restored code로 해독해보는 실습을 진행해보려고 합니다.
+Hi, this is banda. :)
 
-본 unpacking 글은 교육 및 연구 목적에서 작성되었으며, 윤리적인 기준을 지키며 생태계를 유지하는데 동참해 주기 바랍니다.
+Thank you for giving VMProtect Part 1 more attention than I expected. But I still crave even more attention, so I am back with VMProtect Part 2. In line with the theory-oriented flow of the previous write-up, I wanted Part 2 to extend into a more real-world setting. This time, together with static analysis, we will actually decode functions virtualized by VMProtect 3 into a devirtualized binary / restored code and walk through that process as a hands-on exercise.
+
+If you have not read it yet, I recommend checking out the previous post first: [VMProtect Devirtualization Part 1](https://hackyboiz.github.io/2025/09/11/banda/LLVM_based_VMP/ko/).
+
+This unpacking article is written purely for educational and research purposes. Please follow ethical guidelines and help keep the ecosystem healthy.
 
 ## Devirtualization Rules
 
-![](./post03/image1.png)
+![](/2025/12/11/banda/VMPpart2/en/image1.png)
 
-챌린지에 들어가기 전에, 먼저 가상화 난독화의 기본 아이디어를 간단히 정리해 보겠습니다!  원래 프로그램은 x86, x64 같은 실제 CPU용 기계어로 실행됩니다. 그런데 VMProtect, Themida 같은 가상화 난독화 도구는 이 코드를 그대로 두지 않고
+Before jumping into the challenge, let’s briefly recap the basic idea behind virtualization-based obfuscation. Normally, a program runs directly as machine code for a real CPU, such as x86 or x64. Tools like VMProtect or Themida do not leave this code as is. Instead, they:
 
-1. 원래 x86 코드를 “가상 바이트코드”로 변환하고
-2. 이 바이트코드를 실행하는 가상 머신(VM) 코드를 바이너리 안에 집어넣은 다음
-3. 실제 실행 시에는 이 VM이 바이트코드를 하나씩 해석하면서 동작하도록 만듭니다.<br><br>
+1. Convert original x86 code into a “virtual bytecode”
+2. Embed a virtual machine (VM) inside the binary that can interpret this bytecode
+3. At runtime, the VM executes by fetching and interpreting each bytecode instruction one by one
 
-**VM State Transition (VM 상태 전이)**
+**VM State Transition**
 
-가상화 해제를 이해하려면, “VM이 어떤 상태를 가지고 있고, 그 상태가 핸들러를 거치면서 어떻게 변하는지”에 집중하시는 게 중요합니다. 아래는 VM의 상태(State) 정의입니다.
+To understand devirtualization, the key is to focus on “what state the VM maintains, and how that state changes when a handler executes.” The VM state can be defined as follows:
 
 ```
 VIP: Virtual Instruction Pointer
 VSP: Virtual Stack Pointer
-VStack 내용: 스택에 쌓여 있는 값들
-Scratch: 임시 저장소
-VFlags: 가상 플래그들(ZF, CF 같은 역할)
+VStack: values currently stored on the virtual stack
+Scratch: temporary storage
+VFlags: virtual flags (playing roles similar to ZF, CF, etc.)
+
 ```
 
-아무리 난독화가 심하다고 해도, 결국 중요한건 핸들러를 거치고 나서 ‘상태 묶음이 어떻게 바뀌었나’를 알아내는 것 뿐입니다. VM은 CPU가 아니라, `VIP`, `VStack`, `Scratch`, `VFlags`을 입력으로 받아서 다시 새로운 `VIP`, `VStack`, `Scratch`, `VFlags`을 내놓는 상태 전이 함수들의 집합으로 볼 수 있고, 핸들러를 분석할 때는 디스어셈블리 전체를 다 이해하려고 하기보다 ‘이 핸들러가 VM 상태를 이렇게 바꾼다’라는걸 요약할 수 있으면 그 핸들러 의미는 다 파악한 겁니다.
+No matter how heavy the obfuscation is, what ultimately matters is “how the bundle of state changes after each handler.” You can think of the VM not as a CPU, but as a collection of state-transition functions that take `VIP`, `VStack`, `Scratch`, and `VFlags` as input and produce new `VIP`, `VStack`, `Scratch`, and `VFlags` as output.
+
+When analyzing a handler, instead of trying to understand every single instruction in the disassembly, the important part is to be able to summarize: “this handler transforms the VM state in this way.” Once you can say that, you have essentially understood that handler’s semantics.
 
 ## DevirtualizeMe Challenge - VMP32 v1
 
-![](./post03/image2.png)
+![](/2025/12/11/banda/VMPpart2/en/image2.png)
 
-이번에 실습해볼 Challenge는 Tuts4You의 [DevirtualizeMe](https://forum.tuts4you.com/topic/39481-devirtualizeme-vmprotect-309/#comment-190252)입니다. 프로그램은 C++ 클래스 `UnpackMe`를 중심으로 동작하며, VMProtect 3.0.9의 Virtualization 보호가 적용되어 있습니다. 이 글의 목표는 첨부된 바이너리 안에서 VMProtect가 가상화한 함수들을 찾아내고, 그 위에서 실행되는 바이트코드의 의미를 해석하거나 본래 네이티브 코드 수준의 로직을 최대한 복원해 보는 것입니다. 분석 도구로는 IDA, Detect It Easy, Triton, VMPTrace 등을 사용할 예정입니다.<br>
+The challenge we will work on here is [DevirtualizeMe](https://forum.tuts4you.com/topic/39481-devirtualizeme-vmprotect-309/#comment-190252) from Tuts4You.
 
-### 문제 정보
+The program is structured around a C++ class named `UnpackMe`, and it is protected with VMProtect 3.0.9 using Virtualization mode. The goal of this post is to locate the functions that VMProtect has virtualized inside the attached binary, interpret the bytecode running on top of that VM, and reconstruct the original native-level logic as far as possible. The tools used are IDA, Detect It Easy, Triton, and a custom VMPTrace-style toolchain.
+
+### Challenge Information
 
 **Difficulty :** 8
+
 **Language :** C++
+
 **Platform :** Windows x86
+
 **OS Version :** All
+
 **Packer / Protector :** VMProtect 3.0.9
 
-**Unpack** 목표
+**Unpack goal**
 
-> 첨부된 바이너리(`.exe`)에서 가상화된 함수를 해석하고,
-가상화 해제 패치를 적용한 후 패치 프로그램을 실행했을 때 오류가 없이 돌아가야 합니다.
+> From the attached binary (.exe), analyze the virtualized function(s), apply a devirtualization patch, and ensure that the patched program runs without errors.
 
-***조건 :*** 
-P를 눌렀을 때 VMP 영역에 있는 가상화 함수가 실행되며 메세지 박스가 나타난다.
-난독화 해제가 잘 되었다면 (패치 후에도 원본 로직을 유지한다면) 
-패치 후 프로그램을 실행했을 때 P를 눌러도 crash가 뜨지 않아야 합니다.
->  
+***Condition:***
+> 
+> 
+> When you press P, a virtualized function located in the VMP region runs and shows a message box.If the devirtualization has been done correctly (i.e., the original logic is preserved even after patching), running the patched program and pressing P must not produce a crash.
+> 
 
-![](./post03/image3.png)
+![](/2025/12/11/banda/VMPpart2/en/image3.png)
 
-DiE의 엔트로피를 열어보면 전형적인 Virtualization 모드가 적용되었음을 알 수 있습니다. `.text` 영역이 난독화되어 있고, VMP의 핵심 VM bytecode가 들어갔다는 것을 `.vmp0`이 설명해주기 때문입니다. Entry Stub, Initialization stub가 패킹되었고, Run-time VM engine은 `.vmp0`에 존재할 것으로 생각합니다. `WinMain` → `UnpackMe` → `Run`으로 이어지는 흐름을 따라가면서, 실제로 VMEntry가 어디에 있는지부터 차근차근 확인해 보겠습니다.
+If we check the entropy view in DiE, we can see a typical pattern for Virtualization mode. The `.text` section is obfuscated, and the presence of `.vmp0` indicates that VMP’s core VM bytecode lives there. Entry stub and initialization stub are packed, and the runtime VM engine is expected to reside in `.vmp0`.
+
+We will follow the flow `WinMain` → `UnpackMe` → `Run` and carefully locate where the VMEntry actually is.
 
 ### Road to VMEntry
 
@@ -93,25 +108,32 @@ int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdL
 
 ```
 
-일반적인 가상화 난독화 VM은 보통 다음 세 가지 구성 요소를 가진다고 정리합니다.
+A typical virtualization-based obfuscation VM can usually be broken down into the following components:
 
 - `VM Entry` / `VM Exit`
-Entry : 네이티브 레지스터, 스택 상태를 VM 상태로 복사하는 구간
-Exit : 바이트코드 실행이 끝난 뒤, 다시 원래 레지스터, 스택으로 돌려주는 구간
+    
+    Entry: the region where native registers and stack state are copied into the VM state
+    
+    Exit: after bytecode execution finishes, the VM state is written back to the original registers and stack
+    
 - `VM Dispatcher`
-가상 PC(`VIP`)가 가리키는 바이트코드에서 opcode를 읽고 -> 어떤 핸들러로 갈지 결정
--> 핸들러를 호출하는 루프
+    
+    Reads the opcode at the virtual PC (`VIP`), decides which handler to jump to, and repeatedly runs a fetch → decode → dispatch → execute loop
+    
 - `Handler Table`
-Opcode 값마다 연결된 핸들러 함수들의 테이블
-각 핸들러는 "가상 `ADD`, 가상 `XOR`, 가상 분기" 같은 하나의 VM 명령어 의미를 구현  <br><br>
+    
+    A table mapping each opcode to its handler function
+    
+    Each handler implements the semantics of one VM instruction such as “virtual ADD”, “virtual XOR”, or “virtual branch”
+    
 
-DevirtualizeMe 같은 실전 문제에서 첫 단계는 “VMEntry가 어디인지 찾는 것”입니다. VMEntry를 찾아야 VM State의 구조를 파악할 수 있기 때문인데, VM State에 대한 내용은 후에 설명하겠습니다!
+For a real-world challenge like DevirtualizeMe, the first step is to locate the VMEntry. Only after finding the VMEntry can we reason about the VM state layout; I will discuss the VM state in more detail later.
 
-`WinMain()` 함수는 구조가 단순합니다. deevirtualization 관점에서 확인해보면, VMP는 보통 "특정 함수"만 가상화하고, 그 함수에 도달하는 경로는 C++ 코드 그대로 둡니다. 따라서 여기서 `vtable[0]`이 `UnpackMe::Run`이라는 사실만 확인하고 넘어가봅시다.  
+The `WinMain()` function itself is structurally simple. From a devirtualization perspective, note that VMP usually virtualizes only certain target functions and leaves the path leading up to those functions in normal C++ code. So here we just need to confirm that `vtable[0]` is in fact `UnpackMe::Run` and then move on.
 
-![](./post03/image4.png)
+![](/2025/12/11/banda/VMPpart2/en/image4.png)
 
-vtable을 따라가 보면 C++ 클래스 `UnpackMe`의 vtable이 `.rdata` 섹션에 위치하는 것을 확인할 수 있습니다. IDA에서 RTTI가 복원되면 `??_7UnpackMe@@6B@` 심볼이 붙고, `vtable`의 첫 엔트리는 자동으로 `UnpackMe::Run` 이름이 매핑됩니다. 이제 메인 루프를 여는 `UnpackMe::Run`으로 넘어가 보겠습니다.  
+Following the vtable, we find that the C++ class `UnpackMe`’s vtable lives in the `.rdata` section. When IDA successfully reconstructs RTTI, it attaches the symbol `??_7UnpackMe@@6B@` and automatically names the first vtable entry as `UnpackMe::Run`. Let’s now jump into `UnpackMe::Run`, which opens the main loop.
 
 ```c
 int __thiscall UnpackMe::Run(void *this, HINSTANCE hInst)
@@ -133,9 +155,12 @@ int __thiscall UnpackMe::Run(void *this, HINSTANCE hInst)
         DispatchMessageW(&Msg);   // 여기서 WndProc 체인으로 들어감
     }
 }
+
 ```
 
-devirtualization 관점에서 중요한 점은, `Run` 함수가 VM으로 들어가는 문지기 같은 역할을 하고 있습니다. 키보드를 통해 P키가 입력되면, 이 루프를 타면서 VMProtect Entry까지 도달하는 것이죠! 이 함수는 윈도우 클래스를 등록하고, `lpfnWndProc = sub_40CC70`로 전역 `WndProc`을 설정한 뒤, 메시지 루프에서 `DispatchMessageW`를 반복 호출합니다. 실제 키 입력(P 키 포함)은 모두 이 메시지 루프를 통해 `WndProc`으로 전달되고, 그 안에서 다시 `UnpackMe` 멤버 함수들로 라우팅됩니다.  
+From a devirtualization point of view, `Run` acts as a kind of gatekeeper into the VM. When the user presses the P key, the program flows through this loop and eventually reaches the VMProtect entry point.
+
+This function registers a window class, sets `lpfnWndProc = sub_40CC70` as the global WndProc, and then repeatedly calls `DispatchMessageW` inside the message loop. All key input (including P) goes through this message loop and eventually arrives at `WndProc`, which then routes messages into `UnpackMe`’s member functions.
 
 ```c
 LRESULT __stdcall WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
@@ -148,9 +173,12 @@ LRESULT __stdcall WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
     else
         return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }
+
 ```
 
-여기서 중요한 사실은, OS 입장에서는 `UnpackMe`라는 C++ 클래스의 존재나 객체 개수를 전혀 모릅니다. OS는 단지 `WndClass_DevirtualizeMe` 클래스에 대한 윈도우에 메시지가 오면 `sub_40CC70`을 호출한다는 정도만 알고 있고, `sub_40CC70`이 내부적으로 `UnpackMe::WndProc`으로 메시지를 넘기고 있습니다. 즉, devirtualization 관점에서는 결국 모든 키보드 메시지가 `UnpackMe::WndProc`로 들어온다는 사실을 기억합시다! 우리는 이 멤버 `WndProc()`에서 `WM_KEYDOWN`이 어떻게 처리되는지만 보면 됩니다.  
+The important point here is that the OS has no idea that a C++ class named `UnpackMe` even exists, nor how many instances there are. The OS only knows that for windows of class `WndClass_DevirtualizeMe`, the WndProc is `sub_40CC70`, and that function internally forwards messages into `UnpackMe::WndProc`.
+
+In other words, from a devirtualization perspective, all keyboard messages eventually end up in `UnpackMe::WndProc`. Therefore we only need to see how this `WndProc()` handles `WM_KEYDOWN`.
 
 ```c
 int __thiscall UnpackMe::WndProc(void *this,
@@ -178,9 +206,10 @@ int __thiscall UnpackMe::WndProc(void *this,
     }
     ...
 }
+
 ```
 
-`WM_KEYDOWN`이 도착하면, 함수는 `vtable[6]`에 매핑된 `OnKeyDown`으로 제어를 넘깁니다. 여기까지는 여전히 메시지 라우팅 단계이며, 실제 VMProtect 가상화 코드는 아직 등장하지 않습니다. 하지만 슬퍼하지 마세요. 곧 나올 것 같은 예감이 듭니다.  <br>
+When `WM_KEYDOWN` arrives, this function forwards control to `OnKeyDown`, which is mapped to `vtable[6]`. Up to this point we are still just in the message routing layer, and no VMProtect virtualized code has appeared yet. But we do not have to be disappointed—things are about to get more interesting.
 
 ```c
 int __thiscall UnpackMe::OnKeyDown(int this,
@@ -192,43 +221,45 @@ int __thiscall UnpackMe::OnKeyDown(int this,
         proc();
     return 0;
 }
+
 ```
 
-`OnKeyDown`은 키보드 입력을 실제로 검사하는 함수입니다. `wParam`이 문자 `'P'(0x50)`일 때만 `vir_Entry()`를 호출하고, 그 외의 키 입력은 모두 무시합니다.  
+`OnKeyDown` is where the key input is actually checked. When `wParam` equals the character `'P'` (0x50), it calls `proc()`. All other key presses are ignored.
 
-![](./post03/image5.png)
+![](/2025/12/11/banda/VMPpart2/en/image5.png)
 
-실제로 프로그램을 실행한 뒤에 P 키를 누르면 주소 정보와 함께 메세지 박스가 뜨는데, 이때 실행되는 진입점이 `vir_Entry()`라고 보시면 됩니다.  
+If you run the program and press P, a message box appears with some address information. That entry point is effectively what we call `vir_Entry()`.
 
-![](./post03/image6.png)
+![](/2025/12/11/banda/VMPpart2/en/image6.png)
 
-여기부터 `call analysis failed`가 뜨면서 디컴파일에 실패하는데, 이 함수 내부에 비정상 제어 흐름, 간접 분기, 스택/레지스터를 망가뜨리는 시퀀스가 있어서 일반적인 C코드로 복구가 어렵다는 뜻입니다. 즉, devirtualizer을 만들거나 해독할 때의 출발점이 바로 이 `vir_Entry()`가 되겠죠?  
+From this point onward IDA shows `call analysis failed` and cannot decompile the function. This means that inside this function, there are abnormal control flows, indirect branches, and sequences that scramble the stack/registers, making it hard to lift back to normal C code. In other words, from the perspective of building or using a devirtualizer, this `vir_Entry()` becomes our starting point.
 
-저희는 VMProtect가 보호한 함수까지 도달하는 전체 경로가  
+By static analysis we traced the full path to the virtualized code as:
 
 ```c
 WinMain → UnpackMe::Run → DispatchMessage → UnpackMe::WndProc → OnKeyDown → proc()
+
 ```
 
-임을 정적 분석을 통해 확인할 수 있었습니다. 여기서 `proc()` 또는 그 안의 `vir_Entry` 지점이 VMEntry + VMProtect Virtualized 함수 몸통이라는 것까지 파악했습니다.
+and we confirmed that `proc()` (and `vir_Entry` inside it) is where VMEntry and the body of the VMProtect-virtualized function live.
 
-VMEntry 주소를 찾았으니 디버거를 연결해 실행을 따라가 봅시다. 진입 직후인 `0x004869BB`부터는 VMProtect 특유의 가상화 엔진 코드가 본격적으로 나타나며, `push`, `call`, `xor`, `add` 등의 연산과 함께 `mov eax, [esi]` / `add esi, 4`와 같은 바이트코드 스트림 로딩 패턴이 반복적으로 확인되었습니다. 이런 흐름은 VMProtect가 내부적으로 가상 레지스터와 바이트코드 포인터(`ESI`)를 갱신하면서 핸들러를 순차적으로 해석하고 있다는 점을 명확히 보여줍니다.  
+Now that we have the VMEntry address, let’s attach a debugger and follow the execution. Starting at `0x004869BB`, you can see VMProtect’s characteristic VM engine code: repeated patterns of `push`, `call`, `xor`, `add`, and so on, together with instructions like `mov eax, [esi]` / `add esi, 4` that repeatedly load from the bytecode stream. This shows clearly that VMProtect is updating virtual registers and the bytecode pointer (`ESI`) while stepping through handlers.
 
-![](./post03/image7.png)
+![](/2025/12/11/banda/VMPpart2/en/image7.png)
 
-전체 VM 엔진을 하나의 CFG로 통합적으로 분석하는 방식은 인간이 하기에는 사실상 불가능에 가깝습니다. VMProtect는 수천 개에 달하는 의미 없는 junk instruction과 control-flow flattening 기법을 적용하기 때문에, 본래 VM 디스패처와 opcode 핸들러 경로를 촘촘히 흐트러놓습니다!   
+Trying to analyze the entire VM engine as one big CFG is practically impossible for a human. VMProtect fills the code with thousands of junk instructions and aggressive control-flow flattening, making the actual VM dispatcher and handler paths extremely tangled.
 
-![](./post03/image8.png)
+![](/2025/12/11/banda/VMPpart2/en/image8.png)
 
-디버거로 핸들러와 디스패처 안을 돌고돌고 돌아서 끝까지 `jmp` 해보면 무언가 나오지 않을까 싶었습니다. 기대와 함께 마주한 것은 opcode 의미를 구현하는 핸들러 하나를 제대로 잡은 줄 알았는데, 결국 아무 의미 없는 트램폴린 역할만 하는 핸들러였습니다. 이런 상황이 수없이 반복되었습니다.  
+At first, I tried walking through the handlers and dispatcher in the debugger, chasing `jmp` instructions to the end in the hope that something meaningful would appear. Instead, I repeatedly landed on trivial “trampoline” handlers that only redirected control elsewhere without doing any semantically interesting work. This pattern repeated over and over.
 
-![](./post03/image9.png)
+![](/2025/12/11/banda/VMPpart2/en/image9.png)
 
-저는 `VMExit`를 잡고 싶었는데, 아무리 찾아봐도 Handler → dispatcher → handler … 가 마치 천국의 계단처럼 반복되었습니다. 마치 디버거에서는 영원히 여기를 빠져나올 수 없을 것만 같았습니다. 특히 평소 CPU처럼 물리 레지스터를 쓰는게 아니라 실행 중 `VIP`, `VSP` 같은 가상 레지스터나 암호화된 Stack 영역에 값을 숨겨놨기 때문에.. `EAX`를 아무리 쳐다봐도 의미있는 데이터가 나오지 않았습니다.  
+I wanted to catch a `VMExit`, but no matter how long I followed the flow, it was just handler → dispatcher → handler → ... like an endless staircase to heaven. From the debugger’s point of view, it felt impossible to ever escape this loop. On top of that, the VM does not use physical registers like a normal CPU. It hides values in virtual registers such as `VIP` and `VSP` and in encrypted stack regions. Staring at `EAX` all day yields nothing meaningful.
 
-![](./post03/image10.png)
+![](/2025/12/11/banda/VMPpart2/en/image10.png)
 
-… 여기에서 디버깅하기에는 이번 생이 더 짧은 것 같습니다. 다른 방법을 한번 찾아봅시다.
+… At this point I felt that my lifetime was too short to finish this using only live debugging. Time to look for another approach.
 
 ### Patch
 
@@ -239,26 +270,24 @@ VMEntry 주소를 찾았으니 디버거를 연결해 실행을 따라가 봅시
 0040D160 83C4 04        add esp, 4
 0040D163 5D             pop ebp
 0040D164 C2 1000        ret 10
+
 ```
 
-![](./post03/image11.png)
+![](/2025/12/11/banda/VMPpart2/en/image11.png)
 
-Trace로 프로그램 흐름을 추적하기 위해서 먼저 원본 바이너리에 약간의 패치를 적용했습니다. 고질적인 문제인지 의도된 사항인지 모르겠으나 Intel Pin Tool로 실행할 경우 문제 바이너리가 백그라운드 상태로만 돌아갔기 때문에, 프로그램 실행 직후 필자가 ‘P’를 누르지 않아도 즉시 VM Entry로 진입하도록 패치하였습니다.  
+To trace the program more effectively, I first applied a small patch to the original binary. For reasons I am not certain about (whether intentional or accidental), when run under Intel Pin, this challenge binary stayed in the background and did not respond to my key presses. So I modified the binary so that right after startup it immediately jumps into VM Entry, without waiting for me to press P.
 
-### Pin을 이용한 Trace 수집
+### Collecting Trace with Pin
 
+Intel Pin is a dynamic binary instrumentation tool that lets you inject analysis code into a running program. Regardless of what kind of obfuscation is applied, Pin can intercept and log every single instruction that actually executes. It will not miss even one instruction.
 
+To collect traces, I first identified several key addresses through static analysis:
 
-Intel Pin은 프로그램 실행 중에 코드를 삽입하여 동작을 분석하는 도구입니다. Pin은 실제 실행 흐름이 어떠한 난독화 기법을 적용해도, 프로그램이 실행하는 **단 하나의 명령어(Instruction)도 놓치지 않고** 모두 가로채서 기록할 수 있습니다.
+- **gDispEntry (`0x004869BB`):** VM Entry (dispatcher entry point)
 
+![](/2025/12/11/banda/VMPpart2/en/image12.png)
 
-Trace를 수집하기 위해서 정적 분석으로 아래 주소들을 확인했습니다.
-
-- **gDispEntry (`0x004869BB`):** VM Entry(진입점)
-
-![](./post03/image12.png)
-
-- **gHandler82 (`0x004181BB`):** 분석을 통해 찾은 특정 핸들러(ID 82)의 진입점
+- **gHandler82 (`0x004181BB`):** entry point of a specific handler (ID 82) found through analysis
 
 ```c
 24566 vmtrace.out
@@ -271,15 +300,18 @@ r:0x00481349:0x00401dcd:0x00000000:0x97010000:0x00000000:0x0000000a:0x004011fc:0
 i:0x00481349:5:E9CA50FBFF
 r:0x00436418:0x00401dcd:0x00000000:0x97010000:0x00000000:0x0000000a:0x004011fc:0x0019ff28:0x0019ff18:0x00000202
 i:0x00436418:1:55
+
 ```
 
-먼저 VMProtect VM이 한 사이클을 도는 구간을 Trace에서 추출했는데, 이 과정만으로도 약 `n0,000`줄에 달하는 기록이 생성되었습니다! 이 정도 규모라면 핸들러 단위로 분리하고 반복되는 패턴을 자동으로 식별하는 과정이 필수적이겠네요. 
+I first extracted from the trace a region corresponding to one full cycle of the VMProtect VM, and that alone already produced on the order of `n0,000` lines of log. At this scale it becomes essential to split the trace at handler boundaries and automatically identify repeating patterns.
 
-`i`: 줄은 실행된 명령어,
-`r`: 줄은 해당 시점의 레지스터 및 스택 상태를 나타내며,
-JonathanSalwan의 [VMProtect-devirtualization](https://github.com/JonathanSalwan/VMProtect-devirtualization) 프로젝트가 많은 도움이 되었습니다!  <br><br>
+Lines starting with `i:` record the executed instructions,
 
-**`uniq -c`로 본 VM 메인 루프 · 핸들러 후보 식별**
+and lines starting with `r:` record the register and stack state at that point.
+
+Jonathan Salwan’s [VMProtect-devirtualization](https://github.com/JonathanSalwan/VMProtect-devirtualization) project was extremely helpful here.
+
+**Identifying VM main loop and handler candidates with `uniq -c`**
 
 ```c
     108 0x0047f287
@@ -287,35 +319,44 @@ JonathanSalwan의 [VMProtect-devirtualization](https://github.com/JonathanSalwan
     108 0x0044a8ac
     108 0x0044a8ab
     108 0x0044a8a7
-    107 0x004181bb 
+    107 0x004181bb
      64 0x00464679
      10 0x0049acd6
      10 0x0049acd4
      10 0x0049acd2
+
 ```
 
-수집된 Trace에서 동일 주소의 실행 빈도를 `uniq -c` 방식으로 계산해 가장 자주 호출된 위치를 나열하였습니다. 이를 토대로 정적 분석을 통해 역할을 분류해보면 다음과 같은 점을 확인했습니다.
+I computed the execution count per address from the trace, using a `uniq -c` style analysis to list the most frequently executed locations. Static analysis then allowed me to categorize them as follows:
 
-- 가장 높은 빈도 108회: VM Dispatcher
-    - **VM 디스패처 (Dispatcher)**
-    `0x0047f287`, `0x0044a8a7` 등 여러 dispatch 조각이 동일한 108번 빈도로 반복되는 것이 확인되었습니다. Dispatcher이 Fetch → Decode → Dispatch → Execute CPU 사이클을 소프트웨어로 구현한 부분이며, dispatcher이 실제 의미 있는 연산을 수행하지 않으므로 제외하고 넘어갑시다.
-- 두 번째로 높은 빈도 107회: 핸들러 ID 82
-    - **가장 많이 쓰인 핸들러 (`LCONST`)**
-    `0x004181BB`는 VMProtect가 자주 사용하는 스택 기반의 가상 머신 특성을 생각해볼 때, 상수 로드(`LCONST`) 계열 핸들러라고 추측해볼 수 있었습니다. 스택 머신에서 모든 연산은 스택 위에서 이뤄지기 때문에, 로드/복사/이동 관련 연산이 많이 반복되겠죠? 가장 빈도가 높은 핸들러를 우선 분석하는 접근이 효율적입니다.  
+- Highest frequency, 108 times: VM dispatcher
+    - **VM Dispatcher**
+        
+        Addresses like `0x0047f287` and `0x0044a8a7` appeared exactly 108 times each. These are pieces of dispatcher code. The dispatcher implements the CPU-like cycle in software (fetch → decode → dispatch → execute). Since the dispatcher itself does not perform interesting semantics, we can skip over it for now.
+        
+- Second highest frequency, 107 times: handler ID 82
+    - **Most frequently used handler (`LCONST`)**
+        
+        Address `0x004181BB` is a strong candidate for a constant-load handler once we consider VMProtect’s stack-based VM design. In a stack machine, most operations happen on the stack, so load/copy/move-style operations tend to be used heavily. Prioritizing the most frequently executed handler for analysis is usually efficient.
+        
 
-### PIN Trace 다시 하기
+### Running the Pin Trace Again
 
-기존 pin에는 이번에는 제공된 Intel Pin Tool 템플릿을 기반으로, ID 82 핸들러만 골라서 추출할 수 있도록 최적화된 Pintool을 개발했습니다. 이 도구를 이용해 VMProtect VM에서 ID 82가 실제로 어떤 연산을 수행하는지 역추적해봅시다!  
+I then extended the original Pin tool (based on the template provided with Intel Pin) into a specialized Pintool that captures only the ID 82 handler. The goal is to reverse engineer what the VMProtect VM actually does for this single opcode.
 
-![](./post03/image13.png)
+![](/2025/12/11/banda/VMPpart2/en/image13.png)
 
-VMProtect 가상머신 한 명령어가 어떤 일을 하는지 동적으로 캡처하기 위해 Pin을 개발했습니다. 가상화 해제 관점에서 고정된 두 IP 지점을 기준으로 한 VM 명령어를 잡고, 바이트코드 로딩 시점에서 `ESI`가 가리키는 4바이트를 캡처하도록 하였으며, 핸들러 내부에서 연산이 끝나고 결과를 스택으로 푸시하는 CONTEXT에서 `EAX`/`EDI` 값을 읽도록 하였습니다.  
+To capture the behavior of a single VM instruction dynamically, I built Pin support to:
 
-![](./post03/image14.png)
+- Anchor each VM instruction using two fixed IP locations
+- Capture the 4 bytes pointed to by `ESI` at the moment the bytecode is loaded
+- Record `EAX`/`EDI` at the point where the handler finishes its computation and pushes the result onto the stack (using Pin’s CONTEXT)
 
-빌드한 `MyPinTool`을 이용해 3가지 정보를 수집했습니다.  <br><br>
+![](/2025/12/11/banda/VMPpart2/en/image14.png)
 
-**1. vmtrace.out: 디스패처 진입부터 VM 종료까지의 전체 x86 명령어**
+Using the built `MyPinTool`, I collected three types of information:
+
+**1. `vmtrace.out`: the complete x86 instruction trace from dispatcher entry to VM exit**
 
 ```c
 #main exe: [0x00400000, 0x00581fff)
@@ -330,22 +371,24 @@ VMProtect 가상머신 한 명령어가 어떤 일을 하는지 동적으로 캡
 0041f637 57
 0041f638 0F BF FF
 ...
+
 ```
 
-이 파일에는 `0x004869BB`에서 VM 디스패처 진입 후, VM이 끝날 때까지 실행된 모든 x86 명령어가 순서대로 기록되어 있습니다. 명령어 주소, 기계어 바이트만 담기게 하고, trace를 따면서 txt 파일이 함께 추출되도록 했습니다.  
+This file contains every x86 instruction executed from `0x004869BB` (VM dispatcher entry) until the VM finishes. Each line records the instruction address and machine bytes. The script that walks the trace also dumps a plain text file side by side.
 
-**2. bytecode_values.txt: ID 82 핸들러 진입 시 `[ESI]` 값 (즉, 가상 명령어 인자)**
+**2. `bytecode_values.txt`: the `[ESI]` value when entering handler ID 82 (i.e., the VM instruction operand)**
 
 ```c
 1,0x0047fa5f,0x1ecbf564,0x000271c9,0x004892af
 2,0x0045cb33,0x1ec6b25f,0xfffcff9f,0x00432085
 3,0x0046ef95,0x1ec5393d,0xfffdab5b,0x0043cc41
 # Total ID82 calls: 3
+
 ```
 
-bytecode values가 추출된 파일을 열어보면, ID 82가 어떤 상수/인자를 입력으로 받았는지 로그로 남겨줍니다. 여러 호출에 대해 인자 패턴을 비교하면, 이 핸들러가 상수를 스택에 푸시하는지, 인자에 특정 연산을 씌우는지, 인덱스로 사용되는지 등을 추론할 수 있습니다. 후에 Triton에서 symbolic value를 넣고 돌릴 때 구체 값으로 사용하려고 합니다.  
+If we open the extracted `bytecode_values.txt`, we can see which constants/operands were fed into handler ID 82. By comparing the operand patterns across multiple calls, we can infer whether this handler is pushing constants onto the stack, applying certain transforms to the operand, or using it as an index, and so on. Later, we will feed these concrete values into Triton when performing symbolic execution.
 
-**3. id82_registers.txt: 핸들러 진입 시점의 레지스터 상태 스냅샷**
+**3. `id82_registers.txt`: register snapshots at handler entry**
 
 ```c
 === VM Entry (0x004869bb) ===
@@ -359,23 +402,31 @@ ID82_002: IP=0x004323ff EAX=0xfffcff9f EBX=0xffb934ac ECX=0x00000020 EDX=0x00004
 ID82_003: IP=0x004323ff EAX=0xfffdab5b EBX=0xffbb44ce ECX=0xdcedb11a EDX=0x00000000 ESI=0x0046ef99 EDI=0x0043cc41 EBP=0x0019fcc0 ESP=0x0019fc00 BYTECODE=0x1ec5393d
 
 # Total ID82 calls: 3
+
 ```
 
-그리고 레지스터 정보가 추출된 파일입니다. VM Entry 시점의 초기 상태와 각 ID 82 호출 직전의 실제 레지스터 값과 함께 BYTECODE 값까지 한줄에 들어가도록 구성했습니다. 즉, 저는 ID 82 핸들러의 코드 + 입력 + 초기 상태 세 가지 목적을 모두 추출하여, 하나의 VM opcode 구현을 완전히 복원하려는 목적에 맞게 pin을 설계했습니다.  
+This file logs the VM entry state and, for each ID 82 call, the exact register values right before executing the handler, along with the bytecode operand (`BYTECODE`). In other words, for handler ID 82 we now have:
+
+- The handler’s code
+- Its input (bytecode and register state)
+- The initial VM state at entry
+
+This matches our goal of fully reconstructing the semantics of a single VM opcode.
 
 
-### VM-only trace에서 ID 82 실행 구간 분리
+### Splitting the VM-only trace by ID 82 execution segments
 
-앞서 수집한 로그를 바탕으로, 이제 개별 VM 핸들러 의미를 복원해보려고 합니다.
+With these logs in hand, we can now start restoring the meaning of individual VM handlers.
 
 ```c
 total ins: 58414
 ID82 entries: 107
 ID82 segments (with glue): 106
 written id82_segments.json
+
 ```
 
-이를 위해 앞서 Pin으로 추출한 `vmtrace.out`에서 ID 82가 실행된 구간에서, ID 82가 실행된 인스턴스별로 segment가 저장되도록 잘라내는 스크립트를 개발했습니다. 앞서 확인했던 ID 82의 Entries는 107번이 나왔으며, segments가 106까지 `json` 파일 안에 추출되었습니다!  
+To do that, I wrote a script that takes `vmtrace.out`, locates each occurrence of ID 82, and slices the trace into segments corresponding to “one execution of ID 82, including its glue code.” Each such segment is then written into a JSON file. Earlier we counted 107 entries for ID 82; the script extracted 106 segments into the JSON.
 
 ```c
   {
@@ -416,11 +467,12 @@ written id82_segments.json
       "0047f287 0F 87 2E 8F F9 FF"
     ]
   }
+
 ```
 
-추출된 segment는 ID 82 진입 → 여러 glue/ 공통 코드 → 디스패처 복귀까지 한 번의 실행 흐름을 그대로 담고 있었습니다. 다만 아직 VMProtect가 넣은 노이즈가 많이 섞여있기 때문에, 아직 이것만으로는 핸들러 순수 본체를 분리한 상태는 아닙니다. 계속 진행해봅시다.  
+Each segment contains the flow from entry into ID 82 → various glue/shared code → return to the dispatcher. However, there is still a lot of VMProtect-inserted noise mixed in, so this alone does not yet isolate the pure handler body. We need to keep going.
 
-### ID 82 패턴 클러스터링
+### Clustering ID 82 patterns
 
 ```c
 total segments: 106
@@ -434,13 +486,16 @@ indices: [19, 39, 59, 93]
 ==== pattern 4 size 4
 indices: [22, 65, 84, 103]
 ...
+
 ```
 
-다음 단계로는 앞서 생성했던 `json` 파일을 로드하여 각 segment의 바이트 시퀀스를 비교하고, 완전히 동일한 패턴끼리 묶는 스크립트를 제작했습니다. 하나의 ID에서 각각의 Segment 들을 서로 비교(클러스터링)하면, 각 Segment마다 서로 완전히 일치하는 패턴이 생깁니다. 예를들면 패턴 1은 Segment 20, 40, 60, 78, 94가 모두 같은 패턴을 가지고 있고, 이를 같은 리스트에 묶어둔 것이라고 할 수 있습니다! 이 과정을 진행하는 이유는, 이 패턴 중 하나를 골라 대표 ID 82 핸들러 코드로 삼아 의미를 분석하기 위한 기준 샘플로 활용하기 위해서 입니다.  
+Next, I loaded the JSON, compared each segment’s byte sequence, and grouped those with identical sequences into clusters. When we do this per handler, segments with exactly the same instruction pattern end up in the same cluster. For example, in pattern 1, segments 20, 40, 60, 78, and 94 all share the same sequence of bytes and thus form one cluster.
 
-### Triton으로 ID 82 핸들러 시뮬레이션
+The purpose of this clustering is to pick one representative pattern per handler. For ID 82, we can choose, say, index 20 from pattern 1 as the canonical example and use it as a reference to understand the handler’s semantics.
 
-이전에 ID 82 패턴 클러스터링 한 결과를 바탕으로 pattern 1에서 index 20을 대표로 골라서, 그 segment의 바이트코드를 하나의 연속된 x86 코드로 덤프해보았습니다.
+### Simulating Handler ID 82 with Triton
+
+Using the clustering result, I dumped the bytes for the segment at index 20 (pattern 1) as a contiguous block of x86 code:
 
 ```c
 written id82_handler.asm from idx 20
@@ -454,24 +509,28 @@ written id82_handler.asm from idx 20
 0044fa8d D0 C8
 0044fa8f F6 D8
 0044fa91 E9 48 9B 02 00
+
 ```
 
-이 결과를 정적분석한 IDA 디스어셈블리와 비교하면 구조가 다음과 같이 정리가 됩니다.  
+Comparing this with the corresponding IDA disassembly, we can see the structure more clearly:
 
-![](./post03/image15.png)
+![](/2025/12/11/banda/VMPpart2/en/image15.png)
 
-`0x004181BB: FF E7 → 0x004181BB jmp edi`는, 디스패처에서 EDI에 핸들러 진입 주소를 넣은 뒤, `jmp`하는 글루 진입점입니다.  
+`0x004181BB: FF E7 → 0x004181BB jmp edi` is the “glue” entry point where the dispatcher has already loaded the handler’s address into `EDI` and now jumps there.
 
-![](./post03/image16.png)
+![](/2025/12/11/banda/VMPpart2/en/image16.png)
 
-그리고 `0x0044FA7A` 이후부터가 중요합니다. 바로 ID 82의 본체 전반부를 알아낸 것인데요.
-위 흐름은 `movzx eax, byte ptr [esi]` / `add esi, 1`로 바이트코드의 첫 바이트(opcode)를 읽고, 이후 `AL`을 `XOR`, `SUB`, `ROR`, `NEG` 등으로 섞은 뒤 다음 위치로 점프하는 흐름을 보여주고 있습니다. `esi`에서 4바이트를 읽어 암호를 풀고, `EBX`를 새 상수 값으로 갱신한 뒤, 다시 디스패처 루프(`0x4323ff`)로 복귀하는 것까지 확인됩니다. 즉, Pin trace와 IDA 디스어셈블리를 결합해 보면, `trace.out` 기준으로 ID 82 핸들러의 완전한 native 코드를 복구한 상태까지 온 거에요. 거의 다 왔습니다!
+From `0x0044FA7A` onward is the essential body of ID 82’s front half.
 
-하지만 여기서 끝이 아닙니다. 이제 이 코드의 수학적 변환을 알아내기 위해, 이 코드를 Triton에 로드하고 앞서 수집한 레지스터와 바이트코드 초기 값을 넣어서 Symbolic Execution을 수행해야 그 본질을 알 수 있는 것이죠.  
+This code performs `movzx eax, byte ptr [esi]` / `add esi, 1` to consume the first byte of bytecode (the opcode), then scrambles `AL` using `XOR`, `SUB`, `ROR`, `NEG`, etc., and finally jumps onward. Later, it executes `mov eax, [esi]` / `lea esi, [esi+4]` to read 4 bytes, presumably the operand. That 4-byte value is decrypted via a series of operations and used to update `EBX`. Control then returns to the dispatcher loop at `0x4323ff`.
 
-### 상태 변화 로그 추적
+So, by combining Pin’s trace with IDA disassembly, we have reconstructed the complete native code for handler ID 82 as seen in `vmtrace.out`. We are almost there.
 
-Triton을 사용해 ID 82 실행 전·후의 레지스터를 비교한 결과, 다음과 같은 중요한 패턴을 발견했습니다.
+But this is still not yet the end. To fully understand the mathematical transformation encoded by this handler, we need to load this code into Triton, feed it the initial register state and bytecode values we collected earlier, and perform symbolic execution.
+
+### Tracking state changes
+
+Using Triton to execute the ID 82 path and compare the registers before and after, we obtain a trace like the following:
 
 ```c
 0x4442f2: shr dh, cl
@@ -541,9 +600,12 @@ Triton을 사용해 ID 82 실행 전·후의 레지스터를 비교한 결과, �
 0x462117: add edi, eax
 0x462119: jmp 0x4323ff
 --- [ Logic End (0x432400) ] ---
+
 ```
 
-위 코드는 Triton 기반 분석 스크립트가 찍은 `asm` 코드로, `vmtrace.out`와 바이너리 바이트를 바탕으로 ID 82 핸들러 실행 경로를 재현해서 디스어셈블한 결과를 저장한 것입니다! Triton을 사용해서 ID 82 실행 전 후 레지스터를 비교한 결과, 다음과 같은 중요한 패턴을 발견했습니다.  
+This is the `asm` trace produced by a Triton-based analysis script. It reconstructs the execution path of handler ID 82 using both `vmtrace.out` and the bytes from the actual binary.
+
+Comparing registers before and after execution for each test case yields:
 
 ```c
 === case 1 bc = 0x1ecbf564
@@ -581,47 +643,48 @@ final EDI = 0xdf590927
 final EBP = 0x19fcbc
 final ESP = 0x19fc00
 diff EAX = 0xffe4573b EBX diff = 0xdf153c3d
+
 ```
 
-**1. 모든 케이스에서 `ESI` 레지스터 값이 정확히 5만큼 증가했습니다.**
+We can extract the following key observations:
 
-`Case 1`: `0x47fa63` → `0x47fa68` (+5)
+**1. In every case, `ESI` increases by exactly 5.**
+    - Case 1: `0x47fa63` → `0x47fa68` (+5)
+    - Case 2: `0x45cb37` → `0x45cb3c` (+5)
+    - Case 3: `0x46ef99` → `0x46ef9e` (+5)
+    
+    So handler ID 82 consumes 5 bytes from the bytecode stream. This matches the earlier code: `movzx eax, byte ptr [esi]` / `add esi, 1` consumes the 1-byte opcode, and later `mov eax, [esi]` / `lea esi, [esi + 4]` consumes 4 more bytes. Together, that is `1 + 4 = 5` bytes.
+    
+**2. `EBX` is updated to a completely new value.**
+    
+    The final `EBX` has no obvious direct relation to its initial value and is clearly the result of some transform. The `bc` (bytecode) values like `0x1ecbf564` go through the decryption routine (involving operations like `NOR`, `ADD`, `ROL`, etc.) to produce the final `EBX` values such as `0x0afe65f2`. Notice that in cases 2 and 3 the final `EBX` is the same: `0x20ae78f3`. Two different encrypted bytecode values (`0x1ec6b25f`, `0x1ec5393d`) converge to the same result, strongly suggesting a decryption function.
+    
 
-`Case 2`: `0x45cb37` → `0x45cb3c` (+5)
-`Case 3`: `ESI = 0x46ef99` → `0x46ef9e` (+5)  <br>
-ID 82가 바이트코드 스트림에서 총 5바이트를 소비했다는 뜻이고, 앞단 코드에서 `movzx eax, byte ptr [esi]` / `add esi, 1`로 1바이트(opcode)를 소비하고, 이후 `mov eax, [esi]` / `lea esi, [esi+4]`로 4바이트를 추가로 읽기 때문에 결과적으로 `1 + 4 = 5` 바이트를 사용하는 구조가 되었다는 것으로 예상해볼 수 있었습니다. <br><br>
+Putting this together:
 
-**2. `EBX` 레지스터의 값이 이전 상태와 전혀 다른 새로운 값으로 변경되었습니다.**
+- Handler ID 82 reads from the bytecode stream:
+    - 1 byte for the opcode
+    - 4 bytes for an encrypted immediate value
+- It then runs a complex transform (XOR, SUB, ROL, etc.) on that 4-byte value and writes the result into `EBX`, effectively placing a constant on the virtual stack.
 
-`EBX`의 최종 값이 초기 `EBX`와 전혀 다른 새로운 값으로 바뀌었으며, 로그의 `bc`(bytecode) 값인 `0x1ecbf564` 등이 핸들러 내부의 복호화 로직(`NOR`, `ADD`, `ROL` 등)을 거쳐 최종적으로 `final EBX` 값인 `0xafe65f2` 등으로 변환된 것으로 예상해볼 수 있습니다. 특히 case 2와 case 3의 최종 `EBX` 둘 다 `0x20ae78f3`으로 동일한데, 서로 다른 암호화된 BYTECODE(`0x1ec6b25f`, `0x1ec5393d`)가 같은 결과로 수렴하는 것으로 보아 어떤 복호화 로직을 수행하고 있음을 추정해봅시다!  <br><br>
+This behavior matches what we would expect from an `LCONST` / `PUSH constant`-style handler.
 
-그러면 앞서 확인했던 특징을 종합해봅시다.
-ID 82는 바이트코드 스트림에서 아래를 읽어들이고
-
-- 1 바이트 opcode
-- 4바이트 암호화된 즉시 값
-
-이 4 바이트 값을 `XOR`, `SUB`, `ROL` 같은 복잡한 연산을 통해 디코딩한 뒤,
-
-- 그 결과를 `EBX`에 반영해서, 가상 스택 상에 상수를 하나 적재(`LCONST`/`PUSH`)하는 핸들러
-
-로 동작할 것임으로 예상해볼 수 있겠죠?
-
-### 그럼 진짜 연산 로직은?
+### So what is the actual arithmetic?
 
 ```c
 TARGET_HANDLERS = [
-    0x44A8A7, 0x47F287, 0x4181BB, 0x40356C, 0x404F43, 
-    0x405B60, 0x405CB6, 0x405CE2, 0x404F5E, 0x404419, 
-    0x404E83, 0x4046BF, 0x4046DC, 0x4892AF, 0x41A261, 
+    0x44A8A7, 0x47F287, 0x4181BB, 0x40356C, 0x404F43,
+    0x405B60, 0x405CB6, 0x405CE2, 0x404F5E, 0x404419,
+    0x404E83, 0x4046BF, 0x4046DC, 0x4892AF, 0x41A261,
     0x45F79C, 0x496B0F, 0x474C45, 0x437E65, 0x493FB7,
     0x43CB8A, 0x46688C, 0x45B9AD, 0x432085, 0x484226
 ]
+
 ```
 
-앞서 중요한 정보를 발견했습니다. ID 82만으로는 실제 프로그램 로직 전체를 복원할 수 없으므로, 저는 ID 82에서 사용했던 분석 파이프라인을 다른 핸들러들로 확장하기로 했습니다. 함수 수가 너무 많기 때문에, 우선 정적 분석과 trace 기반 핫스팟 분석을 통해서 실제로 자주 호출되거나 의미 있어 보이는 핸들러 후보만 선별했습니다.  
+The analysis above shows that we cannot reconstruct the full program logic from ID 82 alone. So I extended the same pipeline used for ID 82 to other handlers. Because there are many handlers, I first used static analysis plus trace-based hotspot analysis to pick only those handlers that are frequently called or appear semantically important.
 
-### 모든 핸들러의 정체가 드러나다.
+### All the handlers reveal themselves
 
 ```c
 >>> Handler 0x432085 (Length: 39)
@@ -652,41 +715,53 @@ TARGET_HANDLERS = [
   [!] 0x4320fd: add edi, eax
 ----------------------------------------
 ...
+
 ```
 
-각각의 주소는 하나의 VM 핸들러 진입점이고, 이들에 대해 ID 82 때와 동일한 세그먼트 분리 → 패턴 클러스터링 → Triton으로 의미를 추출하는 매커니즘을 반복 적용했습니다. 예를들어 위 데이터는 추출된 핸들러 중 `0x00432085`에 대한 실제 상태 변화를 추적한 것입니다. 다음과 같은 사실을 알 수 있습니다!
+Each of the addresses is the entry point of a VM handler. For each such entry, I repeated the same process used for ID 82:
 
-- `ESI`를 증가시키며 바이트코드를 소비
-- `EBX`, `EDI`, 스택(`[esp + eax]`) 등에 대해 일정한 패턴으로 연산 수행
-- 최종적으로 스택 기반 가상 레지스터를 읽고 쓰거나, 상수/메모리 값 조합을 이용해 새로운 값을 만들어 넣는 역할 수행
+- Segment splitting
+- Pattern clustering
+- Triton-based semantic extraction
 
-이런 식으로 각 핸들러마다 이 opcode가 무엇을 하는지 사람이 이해할 수 있는 수준의 연산 단위로 요약해 나간 결과, 전체 파이프라인을 정리해나갈 수 있었습니다. 각 핸들러를 실제 VM 명령 집합의 한 명령어처럼 바라볼 수 있게 된 것이죠.  
+The sample above shows the extracted semantics for handler `0x00432085`. From this we can deduce:
 
-![](./post03/image17.png)
+- It advances `ESI` and consumes bytes from the bytecode stream
+- It updates `EBX`, `EDI`, and stack locations like `[esp + eax]` following a consistent pattern
+- It reads and writes virtual registers located on the stack, combining constants and memory values to construct new values
 
-위 과정이 완료되면, 이제 opcode 값을 실제 핸들러 주소와 연결해야 합니다. Pin에서 VM 디스패처의 FETCH 지점을 후킹하였고, opcode 값에 대한 정보를 확인할 수 있었습니다.   
+By iterating this process, we can summarize each handler as a higher-level VM instruction: load, store, add, logical operations, branches, and so on. That is, we start to see each handler as one instruction in the VM’s instruction set.
 
-![](./post03/image18.png)
+![](/2025/12/11/banda/VMPpart2/en/image17.png)
 
-이 로그와 `vmtrace.out`을 함께 파싱해, 각 opcode가 실제로 어떤 핸들러 진입 주소로 연결되는지 역분석하였습니다. (예를들어 ID 82에 대응하는 opcode는 `0x02`였습니다.)   
+Once this is in place, the next step is to map each opcode value to its handler address. For this, I instrumented the VM dispatcher in Pin at the FETCH site and logged the opcode values being read.
 
-### Devirtualizer(가상화 해제기) 개발
+![](/2025/12/11/banda/VMPpart2/en/image18.png)
 
-여기까지 오면 VM 바이트코드와 실제 핸들러 주소가 일대일 연결된 상태가 되었습니다! 마지막 단계에서는 최종적으로 가상화된 함수 전체를 네이티브 x86으로 재구성하는 전용 devirtualizer를 만들어, 깔끔하게 패치까지 해보자는 생각을 구상해보게 되었습니다.
+Parsing that opcode log together with `vmtrace.out` allowed me to reverse-map each opcode to a handler entry address. For example, the opcode corresponding to ID 82 turned out to be `0x02`.
 
-1. Opcode(연산 코드: `0x02`, `0x40`, `0x88`등..)와 해당 핸들러 주소, 의미를 매핑한 파일을 읽어
-opcode → [핸들러 주소, 의미, 의사 코드] 매핑 테이블을 구성합니다.
-2. VM 바이트코드 스트림을 처음부터 끝까지 순차적으로 읽습니다.
-3. 각 opcode에 대해서, 미리 정의해 놓은 네이티브한 x86 코드 조각을 예를들면 
-`LCONST` → `MOV EBX, imm32`, `ADD` → `ADD [ESP+4], EAX` 이런 식으로 생성해둡니다.
-4. 이렇게 생성된 조각들을 한 영역에 이어 붙여서, 새로운 네이티브 함수 본문을 만듭니다.
-5. 마지막으로는 원본 바이너리의 `vir_Entry` 진입점에서 이 네이티브 함수로 동작하도록 패치해줍니다.  
+### Building the Devirtualizer
 
-![](./post03/image19.png)
+At this stage we now have a one-to-one mapping between VM bytecodes and the actual handler addresses. The final step is to build a dedicated devirtualizer that reconstructs the entire virtualized function as native x86 and patches it back into the binary.
 
-저의 가상화 해제기 코드를 일부 소개해보겠습니다. 위 루프에서는 각 항목을 순회하면서, `real_vip - VMP_BASE_ADDR`로 `.vmp0` 섹션 덤프 내 오프셋을 계산하고, opcode 1바이트를 건너뛰고 해당 opcode에 대응하는 핸들러 이름을 `VM_HANDLERS`에서 조회하도록 구성했습니다.  
+The overall design is:
 
-![](./post03/image20.png)
+1. Read a mapping file that contains opcode (e.g. `0x02`, `0x40`, `0x88` …), the handler entry address, and a summary of its semantics. This becomes the opcode → [handler address, meaning, pseudocode] table.
+2. Parse the VM bytecode stream from start to finish.
+3. For each opcode, emit a corresponding native x86 code snippet which we prepared in advance, for example:
+    - `LCONST` → `MOV EBX, imm32`
+    - `ADD` → `ADD [ESP+4], EAX`
+        
+        and so on.
+        
+4. Concatenate all these snippets into a single region, forming a new native function body.
+5. Finally, patch the original binary so that `vir_Entry` jumps directly into this new native function, bypassing the VM engine.
+
+![](/2025/12/11/banda/VMPpart2/en/image19.png)
+
+Here is part of my devirtualizer code. The loop iterates over each VM instruction and computes the offset into the `.vmp0` dump via `real_vip - VMP_BASE_ADDR`. It then skips the 1-byte opcode, looks up the handler name from `VM_HANDLERS`, and proceeds with reconstruction.
+
+![](/2025/12/11/banda/VMPpart2/en/image20.png)
 
 ```c
 val = (encrypted + 0x55106798) & 0xFFFFFFFF
@@ -694,30 +769,50 @@ val = (0 - val) & 0xFFFFFFFF
 val = (val + 0x69733a52) & 0xFFFFFFFF
 val = ((val << 1) | (val >> 31)) & 0xFFFFFFFF
 decrypted = ~val & 0xFFFFFFFF
+
 ```
 
-주석 부분에는 Triton으로 해당 핸들러 전체를 심볼릭 실행해 얻은 연산 시퀀스를, 위 예시처럼 32비트 모듈러 산술 형태로 파이썬 코드로 재구현해서 적어주면 됩니다. 예를 들어 암호화된 32비트 상수를 입력으로 받아 VMP 핸들러에서 관찰된 것과 동일한 순서로 상수 덧셈 → `0 - val` → 추가 상수 덧셈 → 1비트 로테이션 → `NOT` 연산을 수행해 최종 `decrypted` 값을 얻는 패턴을 확인했다고 칩시다. 주석 부분은 위와 같은 형태로 옮겨 적어볼 수 있습니다.  
+In the comments for each handler, I re-implemented the arithmetic sequence obtained by symbolically executing the handler with Triton, writing it out as 32-bit modular arithmetic in Python, as in the example above.
 
-![](./post03/image21.png)
+For instance, suppose the handler takes a 32-bit encrypted constant as input, then applies exactly these steps as observed in the VM:
 
-`ADD`, `NOR`, `COPY`, `SHL`, `SHR` 같은 중요 핸들러들을 스택 상단 연산 + 플래그 복원 패턴만 깔끔하게 네이티브 조각으로 정리해 Keystone 어셈블러로 기계어 바이트로 변환해 `patch_buffer`에  순서대로 쌓았고, 원본 파일을 복제한 `devirtualizeme_unpacked.exe`의 미리 잡아둔 오프셋에 이 버퍼를 그대로 덮어씌우도록 동작시켰습니다.  
+- Add a constant
+- Compute `0 - val`
+- Add another constant
+- Rotate left by 1 bit
+- Apply a bitwise `NOT`
 
-![](./post03/image22.png)
+We can encode that logic exactly as shown, yielding a `decrypted` value that matches what the VM computes.
 
-긴 여정의 끝이 보입니다.. VMProtect Devirtualization 과정에서 복원된 실제 x86 코드(Devirtualized code)가 출력되었습니다! 이 코드는 앞의 데이터를 토대로 생성된 네이티브 x86 함수이며, 패치 후 IDA에서 해당 영역을 보면 난독화된 VMP 코드 대신 위와 같은 깔끔한 어셈블리가 자리잡고 있는 것을 확인할 수 있을 것입니다.  
+![](/2025/12/11/banda/VMPpart2/en/image21.png)
 
-![](./post03/image23.png)
+For key handlers like `ADD`, `NOR`, `COPY`, `SHL`, `SHR`, I distilled their stack-top operations plus flag reconstruction into clean native code fragments, and then used the Keystone assembler to convert them into machine code. Those bytes were pushed into a `patch_buffer` in order, and the devirtualizer overwrote a pre-allocated region in a duplicated binary named `devirtualizeme_unpacked.exe` with this buffer.
 
-패치 후 비교를 위해 `.vmp0` 영역의 시작 부분을 비교해봤습니다. 먼저 패치 전 코드에는 VMP 전용 섹션에 의미 없는 연산과 점프가 얽혀 있는 난독화 코드가 존재한다는 것을 확인합니다.  
+![](/2025/12/11/banda/VMPpart2/en/image22.png)
 
-![](./post03/image24.png)
+At the end of this long journey, we finally get to see the restored native x86 code: the devirtualized function. This code is entirely generated from the data we collected and analyzed and represents the original logic in a straightforward x86 form. If you open this region in IDA on the patched binary, you will now see clean assembly in place of VMP’s obfuscated engine code.
 
-패치 후에는 동일 위치에 스택에서 값을 꺼내 `AND`/`SHR`/`SHL` 하는 평범한 네이티브 x86 함수가 들어가 있습니다. 패치된 바이너리를 실행해보면, 더 이상 VMProtect 엔진을 거치지 않고 복원된 네이티브 함수로 바로 실행되어, P를 눌렀을 때 가상화 함수가 동작했던 원래와 동일한 메세지 박스가 출력됩니다!  
+![](/2025/12/11/banda/VMPpart2/en/image23.png)
 
-## 마무리: 가상화 해제 성공
+To compare before and after, I looked at the beginning of the `.vmp0` region. Before patching, the section is filled with VMP-specific obfuscated code: meaningless operations and tangled jumps.
 
-![](./post03/image25.png)
+![](/2025/12/11/banda/VMPpart2/en/image24.png)
 
-가상화 해제에 성공한 캡처를 올리며 글을 마무리하도록 하겠습니다. 가상화된 대상 함수에 대해서는 `vir_Entry`를 패치해, VMP 디스패처 대신 구현한 네이티브 코드 블록으로 직접 분기하도록 구성했습니다. 원래는 2편까지 하려고 했는데, 뭔가 더 어려운 가상화 해제 문제도 unpack 해보고 싶다는 생각이 드네요..  또한 이번 part 2를 작성하며 LLVM과 결합해 복잡한 바이너리를 어느 수준까지 가상화 해제할 수 있을지도 고민해보았고, 만약 이어서 시리즈를 쓴다면 아마 이 주제가 되지 않을까 싶습니다.  
+After patching, the same location now contains a normal native x86 function that pops values from the stack and performs simple operations such as `AND`, `SHR`, and `SHL`. When you run the patched binary, it no longer goes through the VMProtect engine; instead, it executes the restored native function directly. Pressing P still triggers the same virtualized logic and shows the original message box—just without the VM.
 
-저와 함께 난독화 해제의 여정을 함께 해주셔서 감사합니다.😁
+## Wrapping Up: Devirtualization Success
+
+![](/2025/12/11/banda/VMPpart2/en/image25.png)
+
+I will conclude with a screenshot showing the successful devirtualization. For the virtualized target function, I patched `vir_Entry` so that it jumps directly into the native code block I generated instead of the VMP dispatcher.
+
+Originally I planned to stop at Part 2, but now I feel like trying even harder virtualization challenges and unpacking them as well. While writing Part 2, I also thought a lot about how far one could push devirtualization by combining this approach with LLVM, and if I ever write a follow-up in this series, that will very likely be the topic.
+
+Thank you for joining me on this journey through deobfuscation. 😁
+
+# Reference
+
+- https://forum.tuts4you.com/topic/39481-devirtualizeme-vmprotect-309/#comment-190252
+- https://hackyboiz.github.io/2025/09/11/banda/LLVM_based_VMP/ko/
+- https://whereisr0da.github.io/blog/posts/2021-01-05-vmp-1/
+- https://secret.club/2021/09/08/vmprotect-llvm-lifting-1.html
