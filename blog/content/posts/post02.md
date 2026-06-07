@@ -1,7 +1,7 @@
 ---
 title: "VMProtect Devirtualization Deobfuscation Part 01"
 date: "2025-09-11"
-tags: ["Rev"]
+tags: ["VMProtect", "LLVM-IR", "Pin", "Triton"]
 excerpt: "LLVM Based VMP Devirtualization"
 externalUrl: "https://hackyboiz.github.io/2025/09/11/banda/LLVM_based_VMP/en/"
 ---

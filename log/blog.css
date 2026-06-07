@@ -830,41 +830,107 @@ body.log-page::after {
     .bl-side {
         position: static;
     }
+
+    .bl-year-group {
+        margin-top: 34px;
+    }
+
+    .bl-posts {
+        gap: 16px;
+    }
+
+    .bl-card {
+        grid-template-columns: minmax(0, 1fr) 190px;
+        gap: 20px;
+        padding: 20px 22px;
+        border-radius: 15px;
+    }
+
+    .bl-card h2 {
+        font-size: clamp(20px, 3.8vw, 25px);
+    }
+
+    .bl-thumb {
+        height: 118px;
+    }
+
+    .bl-readmore {
+        margin-top: 14px;
+    }
 }
 
 @media (max-width: 620px) {
     .bl-wrap {
-        gap: 34px;
-        padding: 36px 18px 72px;
+        gap: 28px;
+        padding: 32px 14px 64px;
     }
 
     .bl-head h1 {
-        font-size: clamp(34px, 12vw, 46px);
+        font-size: clamp(32px, 10vw, 42px);
+    }
+
+    .bl-year-group {
+        margin-top: 30px;
     }
 
     .bl-year {
         flex-wrap: wrap;
-        gap: 10px 14px;
+        gap: 8px 12px;
+        margin-bottom: 16px;
+    }
+
+    .bl-year-num {
+        font-size: clamp(27px, 9vw, 36px);
+    }
+
+    .bl-year-count {
+        font-size: 12px;
     }
 
     .bl-year-line {
         flex-basis: 100%;
     }
 
+    .bl-posts {
+        gap: 14px;
+    }
+
     .bl-card {
         grid-template-columns: 1fr;
-        gap: 18px;
-        padding: 22px;
-        border-radius: 16px;
+        gap: 12px;
+        padding: 16px;
+        border-radius: 14px;
     }
 
     .bl-card h2 {
-        font-size: clamp(21px, 8vw, 27px);
+        margin-top: 8px;
+        font-size: clamp(18px, 6.4vw, 23px);
+        line-height: 1.22;
+    }
+
+    .bl-meta {
+        font-size: 12px;
+    }
+
+    .bl-tags {
+        gap: 6px;
+        margin-top: 10px;
+    }
+
+    .bl-tag {
+        padding: 2px 8px;
+        font-size: 11px;
+    }
+
+    .bl-readmore {
+        margin-top: 12px;
+        font-size: 12px;
     }
 
     .bl-thumb {
         order: -1;
-        height: 124px;
+        height: 96px;
+        border-radius: 11px;
     }
 
     .bl-orbit,
@@ -880,5 +946,15 @@ body.log-page::after {
     .bl-bio,
     .bl-links {
         font-size: 15px;
+    }
+}
+
+@media (max-width: 390px) {
+    .bl-card {
+        padding: 14px;
+    }
+
+    .bl-thumb {
+        height: 82px;
     }
 }

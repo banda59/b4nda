@@ -1,7 +1,7 @@
 ---
 title: "Road to Windows Minifilter Drivers (CVE-2024-30085)"
 date: "2025-08-15"
-tags: ["Windows"]
+tags: ["Windows", "Minifilter", "CVE-2024-30085", "CldFlt"]
 excerpt: "Windows Minifilter Driver analysis and 1-day vulnerability reproduction"
 externalUrl: "https://hackyboiz.github.io/2025/08/15/banda/Minifilter-Driver/en/"
 ---

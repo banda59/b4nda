@@ -50,7 +50,10 @@
       "date": "2025-09-11",
       "date_human": "September 11, 2025",
       "tags": [
-        "Rev"
+        "VMProtect",
+        "LLVM-IR",
+        "Pin",
+        "Triton"
       ],
       "excerpt": "LLVM Based VMP Devirtualization",
       "slug": "post02",
@@ -62,7 +65,10 @@
       "date": "2025-08-15",
       "date_human": "August 15, 2025",
       "tags": [
-        "Windows"
+        "Windows",
+        "Minifilter",
+        "CVE-2024-30085",
+        "CldFlt"
       ],
       "excerpt": "Windows Minifilter Driver analysis and 1-day vulnerability reproduction",
       "slug": "post01",
