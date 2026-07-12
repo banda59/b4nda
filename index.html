@@ -43,6 +43,7 @@
 
 <body>
   <canvas id="c"></canvas>
+  <div id="vignette" aria-hidden="true"></div>
   <a href="https://www.cursors-4u.com/cursor/2011/11/26/shiny-grey-star.html" target="_blank" title="Shiny Grey Star"><img src="https://cur.cursors-4u.net/cursor.png" border="0" alt="Shiny Grey Star" style="position:absolute; top: 0px; right: 0px;" /></a>
   <button id="volumeBtn" aria-label="Toggle Volume"><img id="volumeImg" src="volume/volOn.png" alt="Volume"></button>
   <div id="credit">
@@ -61,8 +62,11 @@
       <div class="privacyNotice" id="privacyNotice1">이 사이트는 귀하의 개인정보나 쿠키를 수집하지 않습니다.</div>
       <div class="privacyNotice" id="privacyNotice2">이 사이트는 PC 환경에 최적화되어 있습니다.</div>
       <div id="achievementPopup">
-        <div class="ach-title">ACHIEVEMENT UNLOCKED</div>
-        <div class="ach-desc"></div>
+        <img class="ach-icon" src="sprites/doodle_star.png" alt="">
+        <div class="ach-body">
+          <div class="ach-title">ACHIEVEMENT UNLOCKED</div>
+          <div class="ach-desc"></div>
+        </div>
       </div>
       <!-- RPG Maker Game Frame -->
       <iframe id="gameFrame" allow="autoplay"></iframe>
@@ -94,42 +98,73 @@
       const files = [
         "1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png", "9.png", "10.png"
       ].map(n => "sprites/" + n);
+      const UFO_FILE = "sprites/10.png";
 
       const OBJ_MIN = 18;
       const OBJ_MAX = 28;
 
-      const OBJ_L_MIN = 1;
-      const OBJ_L_MAX = 2;
-
       const OBJ_SC_MIN = 0.15;
-      const OBJ_SC_MAX = 0.26;
+      const OBJ_SC_MAX = 0.30;
 
       const OBJ_PAD = 10;
       const OBJ_SAME_EXTRA = 60;
 
-      const STAR_DOT_SCALE = 1.0;
-      const STAR_SPARKLE_SCALE = 1.35;
-
       const OBJ_FADE_RATIO = 0.30;
-      const OBJ_FADE_MIN_A = 0.05;
+      const OBJ_FADE_MIN_A = 0.35; /* 0.05 → 0.35: 오브젝트가 통째로 사라지지 않고 은은하게 숨쉬도록 */
       const OBJ_FADE_MAX_A = 1.00;
       const OBJ_FADE_PERIOD_MIN = 6;
       const OBJ_FADE_PERIOD_MAX = 12;
+
+      /* 낙서 오브젝트 초저속 드리프트 (px/s) + 일부는 제자리 bob */
+      const OBJ_DRIFT_MIN = 0.18;
+      const OBJ_DRIFT_MAX = 0.45;
+      const OBJ_BOB_RATIO = 0.45;
+
+      /* 별 3겹 패럴랙스 레이어: 멀수록 작고 어둡고 느리게 */
+      const LAYERS = [
+        { share: 0.55, speed: 1.1, sizes: [1, 1, 1, 2], maxA: 0.5 },
+        { share: 0.30, speed: 2.2, sizes: [1, 2, 2, 2], maxA: 0.75 },
+        { share: 0.15, speed: 3.6, sizes: [2, 2, 3, 4], maxA: 1.0 }
+      ];
+      const DRIFT_X = -0.94; /* 화면 전체가 아주 느리게 팬 되는 방향 */
+      const DRIFT_Y = -0.34;
+
+      /* ?bgdebug 로 열면 유성/UFO 타이머가 8배 빨라짐 (연출 확인용) */
+      const T_SCALE = /[?&]bgdebug/.test(location.search) ? 0.125 : 1;
+
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
       const cv = document.getElementById('c');
       const ctx = cv.getContext('2d', { alpha: false });
 
       let W = 0, H = 0, DPR = 1;
       let imgs = [];
+      let ufoImg = null;
       let stars = [];
       let sparkles = [];
       let objs = [];
+      let meteor = null;
+      let nextMeteorAt = 0;
+      let ufo = null;
+      let nextUfoAt = 0;
+      let built = false;
 
       let seed = (Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0;
       function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
       function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
 
+      /* 마우스 반대 방향으로 레이어별 미세 시차 이동 (부드럽게 따라감) */
+      const par = { x: 0, y: 0, tx: 0, ty: 0 };
+      window.addEventListener('pointermove', (e) => {
+        par.tx = (e.clientX / Math.max(1, W) - 0.5) * -2;
+        par.ty = (e.clientY / Math.max(1, H) - 0.5) * -2;
+      }, { passive: true });
+
+      /* 알파를 5단계로 양자화 → 아날로그 페이드 대신 레트로 "틱틱" 깜빡임 */
+      function qa(a) { return clamp(Math.round(a * 5) / 5, 0, 1); }
+
       function resize() {
+        const pw = W, ph = H;
         DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
         W = Math.max(1, Math.floor(window.innerWidth));
         H = Math.max(1, Math.floor(window.innerHeight));
@@ -142,8 +177,44 @@
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
         ctx.imageSmoothingEnabled = false;
 
-        buildStars();
-        buildObjects();
+        if (!built) {
+          buildStars();
+          buildObjects();
+          built = true;
+        } else if (pw > 0 && ph > 0 && (pw !== W || ph !== H)) {
+          /* 리사이즈 시 재배치(순간이동) 대신 비율 유지 */
+          const sx = W / pw, sy = H / ph;
+          for (const s of stars) { s.x *= sx; s.y *= sy; }
+          for (const s of sparkles) { s.x *= sx; s.y *= sy; }
+          for (const o of objs) { o.x *= sx; o.y *= sy; }
+        }
+        if (reduceMotion) drawStatic();
+      }
+
+      /* 인트로 패널(=게임 프레임)과 타이틀 로고 박스에만 낙서 배치 금지 —
+         그 외(상단 밴드 포함) 배경 전체에 나타남 */
+      function exclusionZones() {
+        const panelW = Math.min(0.9 * W, 1280, 1.28 * H);
+        const panelH = Math.min(0.8 * H, 800, 0.5625 * W);
+        const pad = 26;
+        const panelTop = (H - panelH) / 2;
+        return [
+          {
+            x0: (W - panelW) / 2 - pad,
+            y0: panelTop - pad,
+            x1: (W + panelW) / 2 + pad,
+            y1: (H + panelH) / 2 + pad
+          },
+          { x0: W / 2 - 280, y0: panelTop - 190, x1: W / 2 + 280, y1: panelTop }
+        ];
+      }
+
+      function inZones(zones, x, y) {
+        for (let i = 0; i < zones.length; i++) {
+          const z = zones[i];
+          if (x > z.x0 && x < z.x1 && y > z.y0 && y < z.y1) return true;
+        }
+        return false;
       }
 
       function buildStars() {
@@ -151,103 +222,36 @@
         sparkles.length = 0;
 
         const area = W * H;
+        const total = Math.max(900, Math.min(2600, Math.floor(area / 520)));
 
-        const n = Math.max(900, Math.min(2600, Math.floor(area / 520)));
-        for (let i = 0; i < n; i++) {
-          const r = rnd();
-          let size;
-          if (r < 0.62) size = 1;
-          else if (r < 0.86) size = 2;
-          else if (r < 0.96) size = 3;
-          else size = 4;
-
-          size = Math.max(1, Math.round(size * STAR_DOT_SCALE));
-
-          stars.push({
-            x: rnd() * W,
-            y: rnd() * H,
-            s: size,
-            ph: rnd() * Math.PI * 2,
-            sp: 0.7 + rnd() * 0.9,
-            base: 0.18 + rnd() * 0.35
-          });
+        for (let li = 0; li < LAYERS.length; li++) {
+          const L = LAYERS[li];
+          const n = Math.floor(total * L.share);
+          for (let i = 0; i < n; i++) {
+            stars.push({
+              x: rnd() * W,
+              y: rnd() * H,
+              s: L.sizes[(rnd() * L.sizes.length) | 0],
+              layer: li,
+              ph: rnd() * Math.PI * 2,
+              sp: 0.5 + rnd() * 0.8,
+              base: (0.2 + rnd() * 0.4) * L.maxA
+            });
+          }
         }
 
+        /* 십자 반짝이: 연속 성장 대신 점→십자→큰십자→십자 4프레임 스프라이트식 재생 */
         const m = Math.max(45, Math.min(120, Math.floor(area / 19000)));
         for (let i = 0; i < m; i++) {
-          const rr = rnd();
-          let size;
-          if (rr < 0.55) size = 2;
-          else if (rr < 0.85) size = 3;
-          else size = 4;
-
-          size = Math.max(2, Math.round(size * STAR_SPARKLE_SCALE));
-
           sparkles.push({
             x: rnd() * W,
             y: rnd() * H,
-            size,
-            ph: rnd() * Math.PI * 2,
-            sp: 0.55 + rnd() * 0.7,
-            duty: 0.20 + rnd() * 0.55,
-            shape: rnd() < 0.65 ? 0 : 1,
-            on: rnd() < 0.50
+            s: 2 + ((rnd() * 3) | 0),
+            diag: rnd() < 0.35,
+            fps: 6 + rnd() * 4,
+            nextAt: rnd() * 6
           });
         }
-      }
-
-      function drawStars(t) {
-        ctx.fillStyle = "#000";
-        ctx.fillRect(0, 0, W, H);
-
-        for (let i = 0; i < stars.length; i++) {
-          const st = stars[i];
-          const v = st.base + (0.25 + 0.35 * Math.sin(t * st.sp + st.ph));
-          if (v < 0.12) continue;
-
-          const x = st.x | 0;
-          const y = st.y | 0;
-          const s = st.s | 0;
-
-          ctx.globalAlpha = Math.min(1, v);
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(x, y, s, s);
-        }
-        ctx.globalAlpha = 1;
-
-        for (let i = 0; i < sparkles.length; i++) {
-          const st = sparkles[i];
-          const phase = (t * st.sp + st.ph) % (Math.PI * 2);
-          const s = Math.sin(phase);
-
-          const on = (st.on ? (s > (1 - st.duty)) : (s < (-1 + st.duty)));
-          if (!on) continue;
-
-          const x = st.x | 0;
-          const y = st.y | 0;
-          const size = st.size | 0;
-
-          const a = 0.70 + 0.30 * Math.abs(s);
-          ctx.globalAlpha = a;
-
-          const len = (size * (2.1 + 0.8 * Math.abs(s))) | 0;
-
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(x, y, size, size);
-
-          for (let k = -len; k <= len; k += 1) {
-            ctx.fillRect(x + k, y, 1, 1);
-            ctx.fillRect(x, y + k, 1, 1);
-          }
-
-          if (st.shape === 1) {
-            for (let k = -len; k <= len; k += 1) {
-              ctx.fillRect(x + k, y + k, 1, 1);
-              ctx.fillRect(x + k, y - k, 1, 1);
-            }
-          }
-        }
-        ctx.globalAlpha = 1;
       }
 
       function shuffle(a) {
@@ -274,6 +278,7 @@
           for (let i = 0; i < cycle.length && idxs.length < target; i++) idxs.push(cycle[i]);
         }
 
+        const zones = exclusionZones();
         const cell = Math.sqrt(area / (target * 1.15));
         const gx = Math.max(3, Math.floor(W / cell));
         const gy = Math.max(3, Math.floor(H / cell));
@@ -285,14 +290,17 @@
           for (let x = 0; x < gx; x++) {
             const jx = (rnd() - 0.5) * dx * 0.30;
             const jy = (rnd() - 0.5) * dy * 0.30;
-            cand.push({ x: (x + 0.5) * dx + jx, y: (y + 0.5) * dy + jy });
+            const cx = (x + 0.5) * dx + jx;
+            const cy = (y + 0.5) * dy + jy;
+            if (inZones(zones, cx, cy)) continue;
+            cand.push({ x: cx, y: cy });
           }
         }
         shuffle(cand);
 
         let cpos = 0;
         let tries = 0;
-        const maxTries = cand.length * 10;
+        const maxTries = Math.max(1, cand.length) * 10;
 
         while (objs.length < target && tries < maxTries) {
           tries++;
@@ -300,10 +308,13 @@
           const idx = idxs[objs.length % idxs.length];
           const im = imgs[idx];
 
-          const longSideTarget = Math.min(W, H) * (OBJ_L_MIN + (OBJ_L_MAX - OBJ_L_MIN) * rnd());
-          const base = Math.max(im.width, im.height);
-          let sc = longSideTarget / Math.max(1, base);
-          sc = clamp(sc, OBJ_SC_MIN, OBJ_SC_MAX);
+          /* 크기 분포: 작은 것 다수 + 큰 것 소수 → 원근감 */
+          const roll = rnd();
+          const sc = roll < 0.65
+            ? 0.15 + 0.05 * rnd()
+            : roll < 0.92
+              ? 0.20 + 0.06 * rnd()
+              : 0.26 + 0.04 * rnd();
 
           const dw = Math.max(12, Math.round(im.width * sc));
           const dh = Math.max(12, Math.round(im.height * sc));
@@ -316,6 +327,7 @@
           } else {
             x = padEdge + rnd() * (W - padEdge * 2);
             y = padEdge + rnd() * (H - padEdge * 2);
+            if (inZones(zones, x, y)) continue;
           }
 
           x = clamp(x, padEdge, W - padEdge);
@@ -339,19 +351,117 @@
           const fade = (rnd() < OBJ_FADE_RATIO);
           const per = OBJ_FADE_PERIOD_MIN + (OBJ_FADE_PERIOD_MAX - OBJ_FADE_PERIOD_MIN) * rnd();
           const ph = rnd() * Math.PI * 2;
+          const dang = rnd() * Math.PI * 2;
+          const dspd = OBJ_DRIFT_MIN + (OBJ_DRIFT_MAX - OBJ_DRIFT_MIN) * rnd();
 
           objs.push({
             idx,
-            x: x | 0,
-            y: y | 0,
+            x, y,
             dw: dw | 0,
             dh: dh | 0,
             r,
-            fade,
-            per,
-            ph
+            fade, per, ph,
+            vx: Math.cos(dang) * dspd,
+            vy: Math.sin(dang) * dspd,
+            bob: rnd() < OBJ_BOB_RATIO,
+            bobPer: 3 + rnd() * 3,
+            bobPh: rnd() * Math.PI * 2,
+            bobAmp: 1 + ((rnd() * 2) | 0)
           });
         }
+      }
+
+      function drawStars(t) {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, H);
+
+        for (let i = 0; i < stars.length; i++) {
+          const st = stars[i];
+          const L = LAYERS[st.layer];
+          const v = st.base + 0.25 + 0.3 * Math.sin(t * st.sp + st.ph);
+          const a = qa(Math.min(L.maxA, v));
+          if (a < 0.15) continue;
+
+          const depth = (st.layer + 1) * 1.4; /* 근경일수록 시차 큼 */
+          ctx.globalAlpha = a;
+          ctx.fillStyle = "#fff";
+          ctx.fillRect((st.x + par.x * depth) | 0, (st.y + par.y * depth) | 0, st.s, st.s);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function drawSparkles(t) {
+        ctx.fillStyle = "#fff";
+        for (let i = 0; i < sparkles.length; i++) {
+          const sp = sparkles[i];
+          if (t < sp.nextAt) continue;
+          const frame = ((t - sp.nextAt) * sp.fps) | 0;
+          if (frame > 3) {
+            sp.nextAt = t + 1.5 + rnd() * 6;
+            continue;
+          }
+
+          const x = sp.x | 0;
+          const y = sp.y | 0;
+          const arm = [0, sp.s, sp.s * 2, sp.s][frame];
+          const c = sp.s >= 3 ? 2 : 1;
+
+          ctx.globalAlpha = 1;
+          ctx.fillRect(x - ((c / 2) | 0), y - ((c / 2) | 0), c, c);
+          if (arm > 0) {
+            ctx.fillRect(x - arm, y, arm * 2 + 1, 1);
+            ctx.fillRect(x, y - arm, 1, arm * 2 + 1);
+            if (sp.diag && frame === 2) {
+              const d = Math.max(1, (arm * 0.6) | 0);
+              for (let k = 1; k <= d; k++) {
+                ctx.fillRect(x + k, y + k, 1, 1);
+                ctx.fillRect(x - k, y + k, 1, 1);
+                ctx.fillRect(x + k, y - k, 1, 1);
+                ctx.fillRect(x - k, y - k, 1, 1);
+              }
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      /* 픽셀 별똥별: 점점 옅어지는 점선 꼬리.
+         중앙은 패널이 가리므로 좌우 가터에서 급경사로 떨어져 눈에 보이게 */
+      function spawnMeteor(t) {
+        const panelW = Math.min(0.9 * W, 1280, 1.28 * H);
+        const gutter = Math.max(60, (W - panelW) / 2);
+        const left = rnd() < 0.5;
+        const ang = (55 + rnd() * 18) * Math.PI / 180;
+        const inX = gutter * (0.45 + rnd() * 0.5);
+        return {
+          x: left ? inX : W - inX,
+          y: -30 - rnd() * H * 0.08,
+          ux: Math.cos(ang) * (left ? -1 : 1),
+          uy: Math.sin(ang),
+          spd: 240 + rnd() * 140,
+          born: t
+        };
+      }
+
+      function drawMeteor(m, t) {
+        const age = t - m.born;
+        const headA = Math.min(1, age * 4);
+        ctx.fillStyle = "#fff";
+
+        const DASHES = 12;
+        const GAP = 6;
+        for (let k = 0; k < DASHES; k++) {
+          const a = qa(headA * (1 - k / DASHES));
+          if (a <= 0) continue;
+          const px = m.x - m.ux * (k * GAP + 4);
+          const py = m.y - m.uy * (k * GAP + 4);
+          const s = k < 4 ? 2 : 1;
+          ctx.globalAlpha = a;
+          ctx.fillRect(px | 0, py | 0, s, s);
+        }
+        ctx.globalAlpha = Math.min(1, headA);
+        ctx.fillRect(m.x | 0, m.y | 0, 2, 2);
+        ctx.globalAlpha = 1;
       }
 
       function drawObjects(t) {
@@ -361,16 +471,17 @@
 
           if (o.fade) {
             const s = 0.5 + 0.5 * Math.sin((t * (Math.PI * 2) / o.per) + o.ph);
-            const a = OBJ_FADE_MIN_A + (OBJ_FADE_MAX_A - OBJ_FADE_MIN_A) * s;
-            ctx.globalAlpha = a;
+            ctx.globalAlpha = qa(OBJ_FADE_MIN_A + (OBJ_FADE_MAX_A - OBJ_FADE_MIN_A) * s);
           } else {
             ctx.globalAlpha = 1;
           }
 
+          const bobY = o.bob ? Math.round(o.bobAmp * Math.sin(t * (Math.PI * 2) / o.bobPer + o.bobPh)) : 0;
+
           ctx.drawImage(
             im,
-            (o.x - o.dw / 2) | 0,
-            (o.y - o.dh / 2) | 0,
+            (o.x - o.dw / 2 + par.x * 5) | 0,
+            ((o.y - o.dh / 2 + par.y * 5) | 0) + bobY,
             o.dw | 0,
             o.dh | 0
           );
@@ -378,11 +489,113 @@
         ctx.globalAlpha = 1;
       }
 
+      /* UFO 플라이바이: 패널 위 상단 밴드를 따라 화면을 가로질러 날아감 */
+      function spawnUfo() {
+        if (!ufoImg) return null;
+        const panelH = Math.min(0.8 * H, 800, 0.5625 * W);
+        const band = (H - panelH) / 2 - 10;
+        if (band < 34) return null; /* 밴드가 너무 좁으면 이번 회차 스킵 */
+
+        const dir = rnd() < 0.5 ? 1 : -1;
+        const tw = clamp(Math.min(W, H) * 0.11, 60, 110);
+        let sc = tw / Math.max(1, ufoImg.width);
+        sc = Math.min(sc, (band - 10) / Math.max(1, ufoImg.height));
+        const dw = Math.max(24, Math.round(ufoImg.width * sc));
+        const dh = Math.max(12, Math.round(ufoImg.height * sc));
+        return {
+          dir,
+          x: dir > 0 ? -dw - 10 : W + 10,
+          y: 4 + rnd() * Math.max(1, band - dh - 8),
+          spd: 65 + rnd() * 35,
+          dw, dh
+        };
+      }
+
+      function drawUfo(u, t) {
+        const bobY = Math.round(3 * Math.sin(t * 2.4));
+        ctx.globalAlpha = 1;
+        ctx.drawImage(ufoImg, u.x | 0, (u.y | 0) + bobY, u.dw, u.dh);
+      }
+
+      function drawStatic() {
+        if (!built) return;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "#fff";
+        for (let i = 0; i < stars.length; i++) {
+          const st = stars[i];
+          ctx.globalAlpha = qa(st.base + 0.25);
+          ctx.fillRect(st.x | 0, st.y | 0, st.s, st.s);
+        }
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < objs.length; i++) {
+          const o = objs[i];
+          ctx.drawImage(imgs[o.idx], (o.x - o.dw / 2) | 0, (o.y - o.dh / 2) | 0, o.dw | 0, o.dh | 0);
+        }
+      }
+
       let t0 = performance.now();
+      let tPrev = 0;
+
       function frame(now) {
         const t = (now - t0) / 1000;
+        const dt = Math.min(0.05, tPrev ? t - tPrev : 0.016);
+        tPrev = t;
+
+        /* 시차 오프셋은 목표값을 천천히 따라감 */
+        par.x += (par.tx - par.x) * 0.04;
+        par.y += (par.ty - par.y) * 0.04;
+
+        /* 위치 업데이트 — 그리기는 전부 정수 스냅이라 픽셀 유지 */
+        for (let i = 0; i < stars.length; i++) {
+          const st = stars[i];
+          const spd = LAYERS[st.layer].speed;
+          st.x += DRIFT_X * spd * dt;
+          st.y += DRIFT_Y * spd * dt;
+          if (st.x < -4) st.x += W + 8; else if (st.x > W + 4) st.x -= W + 8;
+          if (st.y < -4) st.y += H + 8; else if (st.y > H + 4) st.y -= H + 8;
+        }
+        for (let i = 0; i < objs.length; i++) {
+          const o = objs[i];
+          o.x += o.vx * dt;
+          o.y += o.vy * dt;
+          const mw = o.dw, mh = o.dh;
+          if (o.x < -mw) o.x += W + mw * 2; else if (o.x > W + mw) o.x -= W + mw * 2;
+          if (o.y < -mh) o.y += H + mh * 2; else if (o.y > H + mh) o.y -= H + mh * 2;
+        }
+
+        if (!meteor && t >= nextMeteorAt) meteor = spawnMeteor(t);
+        if (meteor) {
+          meteor.x += meteor.ux * meteor.spd * dt;
+          meteor.y += meteor.uy * meteor.spd * dt;
+          if (meteor.y > H + 80 || meteor.x < -160 || meteor.x > W + 160) {
+            meteor = null;
+            nextMeteorAt = t + (7 + rnd() * 11) * T_SCALE;
+          }
+        }
+
+        if (!ufo && t >= nextUfoAt) {
+          ufo = spawnUfo();
+          if (!ufo) nextUfoAt = t + (40 + rnd() * 40) * T_SCALE;
+        }
+        if (ufo) {
+          ufo.x += ufo.dir * ufo.spd * dt;
+          if ((ufo.dir > 0 && ufo.x > W + 20) || (ufo.dir < 0 && ufo.x < -ufo.dw - 20)) {
+            ufo = null;
+            nextUfoAt = t + (60 + rnd() * 120) * T_SCALE;
+            /* 플라이바이를 끝까지 본 사람에게: 업적 시스템에 알림 */
+            if (!document.hidden) {
+              try { window.dispatchEvent(new CustomEvent('bg:ufo-flyby')); } catch (e) { }
+            }
+          }
+        }
+
         drawStars(t);
+        drawSparkles(t);
+        if (meteor) drawMeteor(meteor, t);
         drawObjects(t);
+        if (ufo) drawUfo(ufo, t);
+
         requestAnimationFrame(frame);
       }
 
@@ -398,6 +611,8 @@
       async function loadAll() {
         const res = await Promise.all(files.map(loadOne));
         imgs = res.filter(x => x.ok).map(x => x.im);
+        const ufoHit = res.find(x => x.ok && x.src === UFO_FILE);
+        ufoImg = ufoHit ? ufoHit.im : null;
 
         if (!imgs.length) {
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -411,6 +626,14 @@
         }
 
         resize();
+
+        nextMeteorAt = (3 + rnd() * 5) * T_SCALE;
+        nextUfoAt = (30 + rnd() * 40) * T_SCALE;
+
+        if (reduceMotion) {
+          drawStatic();
+          return;
+        }
         requestAnimationFrame(frame);
       }
 
@@ -488,6 +711,11 @@
           achievementPopup.classList.remove('show');
         }, 4000);
       }
+
+      /* 배경 UFO 플라이바이 목격 업적 */
+      window.addEventListener('bg:ufo-flyby', () => {
+        unlockAchievement('ufo_witness', 'UFO 목격 (미확인 비행물체)');
+      });
 
       const FADE_IN = 900;
       const FADE_OUT = 900;

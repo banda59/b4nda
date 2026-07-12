@@ -59,6 +59,30 @@
                 }
             }, 10);
 
+            // 부모 페이지의 음소거 버튼과 연동: 게임 마스터 볼륨 제어
+            let pendingVolume = null;
+            const applyVolume = (v) => {
+                if (typeof WebAudio !== 'undefined' && WebAudio.setMasterVolume) {
+                    WebAudio.setMasterVolume(v);
+                    if (typeof Video !== 'undefined' && Video.setVolume) Video.setVolume(v);
+                    return true;
+                }
+                return false;
+            };
+            window.addEventListener('message', (e) => {
+                if (!e.data || e.data.type !== 'set_volume') return;
+                const v = Number(e.data.volume);
+                if (Number.isNaN(v)) return;
+                if (!applyVolume(v)) pendingVolume = v; // 엔진 로드 전이면 보류
+            });
+            const volPoll = setInterval(() => {
+                if (pendingVolume === null) return;
+                if (applyVolume(pendingVolume)) {
+                    pendingVolume = null;
+                    clearInterval(volPoll);
+                }
+            }, 200);
+
             // Detect Game Start for Achievement
             const checkMap = setInterval(() => {
                 if (typeof Scene_Map !== 'undefined') {

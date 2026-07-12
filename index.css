@@ -95,6 +95,15 @@ canvas {
   display: block;
 }
 
+/* 가장자리를 살짝 어둡게 눌러 중앙 콘텐츠에 시선 집중 */
+#vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.38) 100%);
+}
+
 #intro {
   position: fixed;
   inset: 0;
@@ -404,17 +413,26 @@ canvas {
 
 #achievementPopup {
   position: absolute;
-  top: -80px;
+  top: -110px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(90%, 360px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(90%, 390px);
+  box-sizing: border-box;
   background: #000;
   border: 2px solid #fff;
-  padding: 12px;
+  padding: 12px 18px;
   z-index: 200;
-  text-align: center;
+  text-align: left;
+  overflow: hidden;
   transition: top 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28), opacity 0.5s ease;
-  box-shadow: 4px 4px 0px rgba(255, 255, 255, 0.2);
+  /* 이중 픽셀 프레임 + 하드 픽셀 그림자 */
+  box-shadow:
+    0 0 0 3px #000,
+    0 0 0 4px rgba(255, 255, 255, 0.55),
+    7px 7px 0 rgba(255, 255, 255, 0.14);
   pointer-events: none;
   opacity: 0;
 }
@@ -424,18 +442,62 @@ canvas {
   opacity: 1;
 }
 
+/* 등장 시 픽셀 샤인이 한 번 훑고 지나감 */
+#achievementPopup::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 42%, rgba(255, 255, 255, 0.22) 50%, transparent 58%);
+  transform: translateX(-120%);
+}
+
+#achievementPopup.show::after {
+  animation: achSweep 1.1s steps(14) 0.4s 1 both;
+}
+
+@keyframes achSweep {
+  to {
+    transform: translateX(120%);
+  }
+}
+
+.ach-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  image-rendering: pixelated;
+  animation: achTwinkle 0.9s steps(1) infinite;
+}
+
+@keyframes achTwinkle {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+  }
+
+  50% {
+    transform: scale(1.22) rotate(45deg);
+  }
+}
+
+.ach-body {
+  min-width: 0;
+}
+
 .ach-title {
-  color: #ccff00;
+  color: #fff;
   font-family: 'omori2', monospace;
-  font-size: 18px;
-  margin-bottom: 6px;
-  letter-spacing: 1px;
+  font-size: 15px;
+  letter-spacing: 2.5px;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.55);
 }
 
 .ach-desc {
-  color: #fff;
+  color: #c4b9ff;
   font-family: 'kyobo', monospace;
   font-size: 16px;
+  margin-top: 5px;
+  line-height: 1.35;
 }
 
 #gameFrame {
@@ -580,12 +642,19 @@ canvas {
   }
 
   #achievementPopup {
-    width: min(85%, 300px); /* 모바일에서 너비와 패딩 축소 */
-    padding: 8px;
+    width: min(85%, 320px); /* 모바일에서 너비와 패딩 축소 */
+    padding: 9px 12px;
+    gap: 10px;
+  }
+
+  .ach-icon {
+    width: 32px;
+    height: 32px;
   }
 
   .ach-title {
-    font-size: 15px; /* 모바일 폰트 크기 조정 */
+    font-size: 12.5px; /* 모바일 폰트 크기 조정 */
+    letter-spacing: 1.5px;
   }
 
   .ach-desc {
