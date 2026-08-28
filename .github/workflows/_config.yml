@@ -1,4 +1,0 @@
-# Jekyll 빌드에서 제외할 폴더 목록
-exclude:
-  - node_modules/
-  - blog/node_modules/
