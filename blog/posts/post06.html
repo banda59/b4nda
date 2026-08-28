@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wipeload Step 7: Lock the Pages, Break the Kernel</title>
+
+    <link rel="stylesheet" href="../../style.css">
+    <link rel="stylesheet" href="../blog.css">
+
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link href="https://cdn.jsdelivr.net/gh/sun-typeface/SUITE@2/fonts/static/woff2/SUITE.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Sweet400', sans-serif;
+            font-weight: 400; /* 기본 굵기 */
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Sweet800', sans-serif;
+            font-weight: 800; /* 제목에는 더 굵은 굵기를 적용합니다. */
+        }
+
+        /* 코드 블록은 폰트 적용에서 제외하고 고정폭 폰트를 사용합니다. */
+        pre, code, kbd, samp {
+            font-family: 'Consolas', 'Monaco', 'Menlo', monospace;
+        }
+
+        /* strong, b 태그가 굵게 표시되도록 수정 */
+        strong, b {
+            font-weight: 800;
+        }
+
+        .post-content img {
+            max-width: 100%;
+            height: auto;
+            /* 이미지를 가운데 정렬합니다. */
+            display: block;
+            margin: 25px auto;
+            /* 보라색 테두리와 약간의 안쪽 여백, 둥근 모서리를 추가합니다. */
+            border: 3px solid #b091ff;
+            border-radius: 8px;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+
+        .post-content {
+            /* 본문 글자 크기를 키웁니다. */
+            font-size: 1.1em;
+            line-height: 1.7;
+        }
+
+        /* 모바일 반응형 스타일 */
+        @media (max-width: 768px) {
+            .single-post-container .main-content {
+                /* 모바일 화면에 맞게 좌우 패딩을 줄입니다. */
+                padding: 20px 15px;
+            }
+
+            .post-title-full {
+                /* 제목 폰트 크기를 모바일에 맞게 조정합니다. */
+                font-size: 2em;
+            }
+
+            .post-content {
+                /* 본문 폰트 크기와 줄 간격을 조정하여 가독성을 높입니다. */
+                font-size: 1.05em;
+                line-height: 1.75;
+            }
+
+            /* 코드 블록이 가로 스크롤되도록 설정합니다. */
+            .post-content pre {
+                white-space: pre;
+                overflow-x: auto;
+            }
+        }
+
+        #c {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+
+        body.standalone-post {
+            background-color: #000;
+        }
+
+        body.standalone-post .single-post-container {
+            background: #16181d; /* Dark background for content */
+            color: #bcbcff;      /* Main text color: very light blue-purple */
+            max-width: 900px;
+            margin: 40px auto;
+            border-radius: 5px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Inline code style (like Notion's Ctrl+E) */
+        body.standalone-post .post-content :not(pre)>code {
+            color: #d291ff; /* Fluorescent-like purple */
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-size: 90%;
+        }
+
+        /* Link color on dark background */
+        body.standalone-post .post-content a {
+            color: #9c87fa; /* LightSkyBlue for good contrast */
+        }
+
+        /* Full code blocks (pre > code) style for dark mode */
+        body.standalone-post .post-content pre .hljs {
+            background: #121418; /* Darker than the container */
+            border-radius: 4px;
+        }
+
+        @media (max-width: 940px) {
+            body.standalone-post .single-post-container {
+                margin: 20px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            body.standalone-post .single-post-container {
+                margin: 0;
+                border-radius: 0;
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="c"></canvas>
+
+    <div class="single-post-container">
+        <main class="main-content">
+            <article class="post-full">
+                <header class="post-header">
+                    <a href="../index.html" class="back-to-list">&larr; Back to List</a>
+
+                    <h1 class="post-title-full">Wipeload Step 7: Lock the Pages, Break the Kernel</h1>
+
+                    <p class="post-meta">
+                        <time datetime="2026-08-08">August 8, 2026</time> | By banda |
+                        <span class="post-tags">
+                            <a href="../index.html?tag=Windows%20Kernel">Windows Kernel</a>, <a href="../index.html?tag=MDL">MDL</a>, <a href="../index.html?tag=Wipeload">Wipeload</a>, <a href="../index.html?tag=Chrome%20Sandbox">Chrome Sandbox</a>
+                        </span>
+                    </p>
+                </header>
+
+                <section class="post-content">
+                    
+                </section>
+            </article>
+        </main>
+    </div>
+
+    <script>
+    const runStarfield = () => {
+      'use strict';
+
+      const files = [
+        "1.png", "2.png", "3.png", "4.png", "5.png", "6.png", "7.png", "9.png", "10.png"
+      ].map(n => "../../sprites/" + n);
+
+      const OBJ_MIN = 18;
+      const OBJ_MAX = 28;
+
+      const OBJ_L_MIN = 1;
+      const OBJ_L_MAX = 2;
+
+      const OBJ_SC_MIN = 0.15;
+      const OBJ_SC_MAX = 0.26;
+
+      const OBJ_PAD = 10;
+      const OBJ_SAME_EXTRA = 60;
+
+      const STAR_DOT_SCALE = 1.0;
+      const STAR_SPARKLE_SCALE = 1.35;
+
+      const OBJ_FADE_RATIO = 0.30;
+      const OBJ_FADE_MIN_A = 0.05;
+      const OBJ_FADE_MAX_A = 1.00;
+      const OBJ_FADE_PERIOD_MIN = 6;
+      const OBJ_FADE_PERIOD_MAX = 12;
+
+      const cv = document.getElementById('c');
+      if (!cv) return;
+      const ctx = cv.getContext('2d', { alpha: false });
+
+      let W = 0, H = 0, DPR = 1;
+      let imgs = [];
+      let stars = [];
+      let sparkles = [];
+      let objs = [];
+
+      let seed = (Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0;
+      function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+      function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
+
+      function resize() {
+        DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        W = Math.max(1, Math.floor(window.innerWidth));
+        H = Math.max(1, Math.floor(window.innerHeight));
+
+        cv.width = Math.floor(W * DPR);
+        cv.height = Math.floor(H * DPR);
+        cv.style.width = W + "px";
+        cv.style.height = H + "px";
+
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.imageSmoothingEnabled = false;
+
+        buildStars();
+        buildObjects();
+      }
+
+      function buildStars() {
+        stars.length = 0;
+        sparkles.length = 0;
+
+        const area = W * H;
+
+        const n = Math.max(900, Math.min(2600, Math.floor(area / 520)));
+        for (let i = 0; i < n; i++) {
+          const r = rnd();
+          let size;
+          if (r < 0.62) size = 1;
+          else if (r < 0.86) size = 2;
+          else if (r < 0.96) size = 3;
+          else size = 4;
+
+          size = Math.max(1, Math.round(size * STAR_DOT_SCALE));
+
+          stars.push({
+            x: rnd() * W,
+            y: rnd() * H,
+            s: size,
+            ph: rnd() * Math.PI * 2,
+            sp: 0.7 + rnd() * 0.9,
+            base: 0.18 + rnd() * 0.35
+          });
+        }
+
+        const m = Math.max(45, Math.min(120, Math.floor(area / 19000)));
+        for (let i = 0; i < m; i++) {
+          const rr = rnd();
+          let size;
+          if (rr < 0.55) size = 2;
+          else if (rr < 0.85) size = 3;
+          else size = 4;
+
+          size = Math.max(2, Math.round(size * STAR_SPARKLE_SCALE));
+
+          sparkles.push({
+            x: rnd() * W,
+            y: rnd() * H,
+            size,
+            ph: rnd() * Math.PI * 2,
+            sp: 0.55 + rnd() * 0.7,
+            duty: 0.20 + rnd() * 0.55,
+            shape: rnd() < 0.65 ? 0 : 1,
+            on: rnd() < 0.50
+          });
+        }
+      }
+
+      function drawStars(t) {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, H);
+
+        for (let i = 0; i < stars.length; i++) {
+          const st = stars[i];
+          const v = st.base + (0.25 + 0.35 * Math.sin(t * st.sp + st.ph));
+          if (v < 0.12) continue;
+
+          const x = st.x | 0;
+          const y = st.y | 0;
+          const s = st.s | 0;
+
+          ctx.globalAlpha = Math.min(1, v);
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(x, y, s, s);
+        }
+        ctx.globalAlpha = 1;
+
+        for (let i = 0; i < sparkles.length; i++) {
+          const st = sparkles[i];
+          const phase = (t * st.sp + st.ph) % (Math.PI * 2);
+          const s = Math.sin(phase);
+
+          const on = (st.on ? (s > (1 - st.duty)) : (s < (-1 + st.duty)));
+          if (!on) continue;
+
+          const x = st.x | 0;
+          const y = st.y | 0;
+          const size = st.size | 0;
+
+          const a = 0.70 + 0.30 * Math.abs(s);
+          ctx.globalAlpha = a;
+
+          const len = (size * (2.1 + 0.8 * Math.abs(s))) | 0;
+
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(x, y, size, size);
+
+          for (let k = -len; k <= len; k += 1) {
+            ctx.fillRect(x + k, y, 1, 1);
+            ctx.fillRect(x, y + k, 1, 1);
+          }
+
+          if (st.shape === 1) {
+            for (let k = -len; k <= len; k += 1) {
+              ctx.fillRect(x + k, y + k, 1, 1);
+              ctx.fillRect(x + k, y - k, 1, 1);
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function shuffle(a) {
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = (rnd() * (i + 1)) | 0;
+          const t = a[i]; a[i] = a[j]; a[j] = t;
+        }
+        return a;
+      }
+
+      function buildObjects() {
+        objs.length = 0;
+        if (!imgs.length) return;
+
+        const area = W * H;
+        let target = Math.round(area / 120000) + 12;
+        target = clamp(target, OBJ_MIN, OBJ_MAX);
+
+        const idxs = [];
+        while (idxs.length < target) {
+          const cycle = [];
+          for (let i = 0; i < imgs.length; i++) cycle.push(i);
+          shuffle(cycle);
+          for (let i = 0; i < cycle.length && idxs.length < target; i++) idxs.push(cycle[i]);
+        }
+
+        const cell = Math.sqrt(area / (target * 1.15));
+        const gx = Math.max(3, Math.floor(W / cell));
+        const gy = Math.max(3, Math.floor(H / cell));
+        const dx = W / gx;
+        const dy = H / gy;
+
+        const cand = [];
+        for (let y = 0; y < gy; y++) {
+          for (let x = 0; x < gx; x++) {
+            const jx = (rnd() - 0.5) * dx * 0.30;
+            const jy = (rnd() - 0.5) * dy * 0.30;
+            cand.push({ x: (x + 0.5) * dx + jx, y: (y + 0.5) * dy + jy });
+          }
+        }
+        shuffle(cand);
+
+        let cpos = 0;
+        let tries = 0;
+        const maxTries = cand.length * 10;
+
+        while (objs.length < target && tries < maxTries) {
+          tries++;
+
+          const idx = idxs[objs.length % idxs.length];
+          const im = imgs[idx];
+
+          const longSideTarget = Math.min(W, H) * (OBJ_L_MIN + (OBJ_L_MAX - OBJ_L_MIN) * rnd());
+          const base = Math.max(im.width, im.height);
+          let sc = longSideTarget / Math.max(1, base);
+          sc = clamp(sc, OBJ_SC_MIN, OBJ_SC_MAX);
+
+          const dw = Math.max(12, Math.round(im.width * sc));
+          const dh = Math.max(12, Math.round(im.height * sc));
+
+          const padEdge = Math.max(dw, dh) * 0.55 + 6;
+
+          let x, y;
+          if (cpos < cand.length) {
+            x = cand[cpos].x; y = cand[cpos].y; cpos++;
+          } else {
+            x = padEdge + rnd() * (W - padEdge * 2);
+            y = padEdge + rnd() * (H - padEdge * 2);
+          }
+
+          x = clamp(x, padEdge, W - padEdge);
+          y = clamp(y, padEdge, H - padEdge);
+
+          const r = (Math.max(dw, dh) * 0.55) + OBJ_PAD;
+
+          let ok = true;
+          for (let i = 0; i < objs.length; i++) {
+            const o = objs[i];
+            const dx2 = x - o.x;
+            const dy2 = y - o.y;
+            const d2 = dx2 * dx2 + dy2 * dy2;
+
+            let need = r + o.r;
+            if (o.idx === idx) need += OBJ_SAME_EXTRA;
+            if (d2 < need * need) { ok = false; break; }
+          }
+          if (!ok) continue;
+
+          const fade = (rnd() < OBJ_FADE_RATIO);
+          const per = OBJ_FADE_PERIOD_MIN + (OBJ_FADE_PERIOD_MAX - OBJ_FADE_PERIOD_MIN) * rnd();
+          const ph = rnd() * Math.PI * 2;
+
+          objs.push({
+            idx,
+            x: x | 0,
+            y: y | 0,
+            dw: dw | 0,
+            dh: dh | 0,
+            r,
+            fade,
+            per,
+            ph
+          });
+        }
+      }
+
+      function drawObjects(t) {
+        for (let i = 0; i < objs.length; i++) {
+          const o = objs[i];
+          const im = imgs[o.idx];
+
+          if (o.fade) {
+            const s = 0.5 + 0.5 * Math.sin((t * (Math.PI * 2) / o.per) + o.ph);
+            const a = OBJ_FADE_MIN_A + (OBJ_FADE_MAX_A - OBJ_FADE_MIN_A) * s;
+            ctx.globalAlpha = a;
+          } else {
+            ctx.globalAlpha = 1;
+          }
+
+          ctx.drawImage(
+            im,
+            (o.x - o.dw / 2) | 0,
+            (o.y - o.dh / 2) | 0,
+            o.dw | 0,
+            o.dh | 0
+          );
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      let t0 = performance.now();
+      function frame(now) {
+        const t = (now - t0) / 1000;
+        drawStars(t);
+        drawObjects(t);
+        requestAnimationFrame(frame);
+      }
+
+      function loadOne(src) {
+        return new Promise((resolve) => {
+          const im = new Image();
+          im.onload = () => resolve({ ok: true, im, src });
+          im.onerror = () => resolve({ ok: false, src });
+          im.src = src;
+        });
+      }
+
+      async function loadAll() {
+        const res = await Promise.all(files.map(loadOne));
+        imgs = res.filter(x => x.ok).map(x => x.im);
+
+        if (!imgs.length) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, cv.width, cv.height);
+          ctx.fillStyle = "#fff";
+          ctx.font = "16px monospace";
+          ctx.fillText("no sprites loaded", 20, 30);
+          ctx.fillText("check page/sprites/*.png and file names", 20, 55);
+          return;
+        }
+
+        resize();
+        requestAnimationFrame(frame);
+      }
+
+      window.addEventListener('resize', resize, { passive: true });
+      loadAll();
+    };
+    </script>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            if (window.hljs) hljs.highlightAll();
+
+            // 페이지가 iframe 외부에서 직접 열렸는지 확인합니다.
+            if (window.self === window.top) {
+                // 직접 열렸을 경우, body에 클래스를 추가하여 배경과 레이웃을 변경합니다.
+                document.body.classList.add('standalone-post');
+                runStarfield();
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -6,7 +6,7 @@
   <script>
   </script>
   <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, viewport-fit=cover" />
-  <link rel="stylesheet" href="index.css" />
+  <link rel="stylesheet" href="index.css?v=3" />
   <title>portfolio</title>
   <link rel="icon" href="/sprites/favicon.png" type="image/png">
   <link rel="shortcut icon" href="/sprites/favicon.png" type="image/png">
@@ -70,7 +70,7 @@
       </div>
       <!-- RPG Maker Game Frame -->
       <iframe id="gameFrame" allow="autoplay"></iframe>
-      <button id="skipBtn">인트로 스킵 &gt;&gt;</button>
+      <button id="skipBtn">인트로 스킵 <span id="skipBtnArrow">&gt;&gt;</span></button>
     </div>
 
     <div id="sleepWrap" aria-hidden="true">
@@ -749,10 +749,10 @@
         let visits = parseInt(localStorage.getItem('visitCount') || '0');
         visits++;
         localStorage.setItem('visitCount', visits);
-        if (visits > 1) { skipBtn.style.display = 'block'; }
-        if (visits >= 100) { LINES.unshift({ html: '좀.. 많이 들어오셨네요.', hold: 1500 }); }
-        else if (visits >= 10) { LINES.unshift({ html: '여전히 기억해주셔서 감사합니다.', hold: 1500 }); }
-        else if (visits >= 5) { LINES.unshift({ html: '..또 오셨네요?!', hold: 1500 }); }
+        skipBtn.style.display = 'block';
+        if (visits >= 100) { LINES.unshift({ html: '<span class="kr-line">좀.. 많이 들어오셨네요.</span>', hold: 1500 }); }
+        else if (visits >= 10) { LINES.unshift({ html: '<span class="kr-line">여전히 기억해주셔서 감사합니다.</span>', hold: 1500 }); }
+        else if (visits >= 5) { LINES.unshift({ html: '<span class="kr-line">..또 오셨네요?!</span>', hold: 1500 }); }
         if (visits >= 10) { unlockAchievement('visit_10', '단골 손님 (10회 방문)'); }
         if (visits >= 100) { unlockAchievement('visit_100', '고인물 (100회 방문)'); }
         if (visits === 1) { unlockAchievement('first_visit', '첫 발걸음 (첫 방문)'); }

@@ -151,6 +151,13 @@ canvas {
   color: #ff33cc;
 }
 
+/* 'omori2'에는 한글 글리프가 없어 'kyobo'로 폴백되는데,
+   두 폰트의 em 비율이 달라 같은 font-size에서도 한글이 훨씬 커 보인다.
+   방문 횟수 안내 문구(한글)만 축소해 영문 줄과 시각적 크기를 맞춘다. */
+#introText .kr-line {
+  font-size: 0.5em;
+}
+
 #introBtn {
   position: absolute;
   left: 50%;
@@ -199,22 +206,69 @@ canvas {
   position: absolute;
   bottom: 20px;
   right: 20px;
-  padding: 8px 12px;
-  background: transparent;
-  border: 1px solid #888;
-  color: #888;
+  padding: 11px 18px;
+  overflow: hidden;
+  background: #ab96ff;
+  border: 1px solid #d8ccff;
+  border-radius: 7px;
+  color: #150f28;
   font-family: 'kyobo', monospace;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 800;
   cursor: pointer;
   display: none;
   /* Initially hidden */
   z-index: 16;
-  transition: color 0.2s, border-color 0.2s;
+  box-shadow: 0 0 16px rgba(171, 150, 255, 0.65), 0 0 0 3px rgba(171, 150, 255, 0.2);
+  animation: skipBtnPulse 2.2s ease-in-out infinite;
+  transition: color 0.2s, border-color 0.2s, background 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+#skipBtn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 45%;
+  background: linear-gradient(115deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  animation: skipBtnShine 2.6s ease-in-out infinite;
+}
+
+#skipBtnArrow {
+  display: inline-block;
+  animation: skipBtnNudge 1.3s ease-in-out infinite;
 }
 
 #skipBtn:hover {
-  color: #fff;
+  color: #000;
   border-color: #fff;
+  background: #c3b3ff;
+  transform: scale(1.06);
+  box-shadow: 0 0 26px rgba(171, 150, 255, 0.9), 0 0 0 4px rgba(171, 150, 255, 0.3);
+}
+
+@keyframes skipBtnPulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(171, 150, 255, 0.65), 0 0 0 3px rgba(171, 150, 255, 0.2); }
+  50% { box-shadow: 0 0 28px rgba(171, 150, 255, 1), 0 0 0 6px rgba(171, 150, 255, 0.32); }
+}
+
+@keyframes skipBtnShine {
+  0% { left: -60%; }
+  55%, 100% { left: 130%; }
+}
+
+@keyframes skipBtnNudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #skipBtn,
+  #skipBtn::before,
+  #skipBtnArrow {
+    animation: none;
+  }
 }
 
 @keyframes blink {

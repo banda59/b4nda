@@ -1,6 +1,36 @@
 {
   "posts": [
     {
+      "title": "Wipeload Step 8: The Last Road, Paved by MDL Kernel EoP",
+      "date": "2026-08-15",
+      "date_human": "August 15, 2026",
+      "tags": [
+        "Windows Kernel",
+        "MDL",
+        "Wipeload",
+        "Full Chain"
+      ],
+      "excerpt": "Chaining CVE-2023-29360 in mskssrv.sys to escalate from a Chrome sandbox escape to SYSTEM privileges.",
+      "slug": "post07",
+      "previewImage": "https://hackyboiz.github.io/2026/08/15/banda/Wipeload_step8/EN/image.png",
+      "externalUrl": "https://hackyboiz.github.io/2026/08/15/banda/Wipeload_step8/EN/"
+    },
+    {
+      "title": "Wipeload Step 7: Lock the Pages, Break the Kernel",
+      "date": "2026-08-08",
+      "date_human": "August 8, 2026",
+      "tags": [
+        "Windows Kernel",
+        "MDL",
+        "Wipeload",
+        "Chrome Sandbox"
+      ],
+      "excerpt": "Exploring Windows kernel MDL management and the Lifetime Bug, MDL Mismatch, and Forgotten Lock vulnerability patterns it creates.",
+      "slug": "post06",
+      "previewImage": "https://hackyboiz.github.io/2026/08/08/banda/Wipeload_step7/EN/image.png",
+      "externalUrl": "https://hackyboiz.github.io/2026/08/08/banda/Wipeload_step7/EN/"
+    },
+    {
       "title": "Unlocking BitLocker: Windows Full-Disk Encryption Under Attack, Part 1",
       "date": "2026-01-22",
       "date_human": "January 22, 2026",
