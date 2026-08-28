@@ -606,25 +606,71 @@ body.log-page::after {
 }
 
 .bl-home {
-    display: inline-block;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
     width: fit-content;
     margin-top: 24px;
-    padding: 7px 14px;
-    border: 1px solid var(--bl-line);
-    border-radius: 8px;
-    color: var(--bl-ink-soft);
-    background: rgba(255, 255, 255, 0.03);
+    padding: 12px 20px;
+    overflow: hidden;
+    border: 1px solid var(--bl-accent-2);
+    border-radius: 9px;
+    color: #08090b;
+    background: var(--bl-accent-2);
     text-decoration: none;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    box-shadow: 0 4px 18px rgba(255, 255, 255, 0.2), 0 0 0 3px rgba(255, 255, 255, 0.06);
+    animation: bl-home-pulse 2.2s ease-in-out infinite;
+    transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.bl-home::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -60%;
+    width: 45%;
+    background: linear-gradient(115deg, transparent, rgba(8, 9, 11, 0.28), transparent);
+    animation: bl-home-shine 2.6s ease-in-out infinite;
+}
+
+.bl-home-arrow {
+    display: inline-block;
+    animation: bl-home-nudge 1.3s ease-in-out infinite;
 }
 
 .bl-home:hover {
-    color: #fff;
-    border-color: var(--bl-line-hi);
-    background: rgba(255, 255, 255, 0.07);
-    transform: translateX(3px);
+    background: #fff;
+    box-shadow: 0 8px 30px rgba(255, 255, 255, 0.4), 0 0 0 4px rgba(255, 255, 255, 0.1);
+    transform: translateX(3px) scale(1.04);
+}
+
+@keyframes bl-home-pulse {
+    0%, 100% { box-shadow: 0 4px 18px rgba(255, 255, 255, 0.2), 0 0 0 3px rgba(255, 255, 255, 0.06); }
+    50% { box-shadow: 0 4px 26px rgba(255, 255, 255, 0.48), 0 0 0 6px rgba(255, 255, 255, 0.12); }
+}
+
+@keyframes bl-home-shine {
+    0% { left: -60%; }
+    55%, 100% { left: 130%; }
+}
+
+@keyframes bl-home-nudge {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bl-home,
+    .bl-home::before,
+    .bl-home-arrow {
+        animation: none;
+    }
 }
 
 /* --- Header --- */
@@ -699,14 +745,14 @@ body.log-page::after {
 /* --- Year groups --- */
 
 .bl-year-group {
-    margin-top: 40px;
+    margin-top: 28px;
 }
 
 .bl-year {
     display: flex;
     align-items: baseline;
     gap: 16px;
-    margin-bottom: 22px;
+    margin-bottom: 16px;
 }
 
 .bl-year-num {
@@ -738,16 +784,16 @@ body.log-page::after {
 .bl-posts {
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: 14px;
 }
 
 .bl-card {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 224px;
-    gap: 28px;
+    grid-template-columns: minmax(0, 1fr) 176px;
+    gap: 22px;
     align-items: center;
-    padding: 28px 30px;
+    padding: 18px 22px;
     overflow: hidden;
     color: inherit;
     text-decoration: none;
@@ -793,11 +839,11 @@ body.log-page::after {
 }
 
 .bl-card h2 {
-    margin: 12px 0 0;
+    margin: 8px 0 0;
     color: #fff;
     font-family: var(--bl-font);
-    font-size: clamp(21px, 2.5vw, 27px);
-    line-height: 1.28;
+    font-size: clamp(18px, 2vw, 22px);
+    line-height: 1.26;
     font-weight: 650;
     letter-spacing: -0.015em;
 }
@@ -842,7 +888,7 @@ body.log-page::after {
     display: inline-flex;
     flex-wrap: wrap;
     gap: 7px;
-    margin-top: 14px;
+    margin-top: 9px;
 }
 
 .bl-tag {
@@ -866,7 +912,7 @@ body.log-page::after {
     display: flex;
     width: fit-content;
     clear: both;
-    margin-top: 18px;
+    margin-top: 11px;
     color: var(--bl-accent);
     font-family: 'JetBrains Mono', monospace;
     font-size: 14px;
@@ -883,7 +929,7 @@ body.log-page::after {
     position: relative;
     display: grid;
     place-items: center;
-    height: 144px;
+    height: 112px;
     overflow: hidden;
     border: 1px solid var(--bl-line);
     border-radius: 14px;
