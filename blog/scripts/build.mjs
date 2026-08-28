@@ -207,4 +207,4 @@ for (const fn of files) {
 }
 
 posts.sort((a, b) => (a.date < b.date ? 1 : -1));
-await fs.writeJson(path.join(outRoot, "posts.json"), { posts }, { spaces: 2 });
+await fs.writeJson(path.join(outRoot, "posts.data.json"), { posts }, { spaces: 2 });

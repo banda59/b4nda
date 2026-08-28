@@ -149,7 +149,7 @@
   })();
 
   /* ---------- Posts ---------- */
-  const response = await fetch("./posts.json", { cache: "no-store" });
+  const response = await fetch("./posts.data.json", { cache: "no-store" });
   if (!response.ok) {
     postList.innerHTML = '<p class="bl-empty">Failed to load posts.</p>';
     return;
